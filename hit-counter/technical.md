@@ -5,60 +5,69 @@ commit: 8f82dfcca2f12d9460d2444092f6adc817d0afc5
 model: claude-sonnet-4-6
 prompt_version: v1
 input_hash: 40a68b7dd1ff3de50a10db8798da6bbe3cf22a3b2260e27cf990cd550d39f66f
-generated_at: 2026-06-30T14:56:25.386423828+02:00
+generated_at: 2026-06-30T14:56:44.326295242+02:00
 generator: specsync
 ---
 
 ## Tech Stack
 
-- **Language:** JavaScript (ES modules targeting the Fastly Compute runtime)
-- **Runtime:** [Fastly Compute (JS Compute)](https://js-compute-reference-docs.edgecompute.app/docs/) — WebAssembly-based edge runtime; not Node.js
-- **Compiler/Bundler:** `@fastly/js-compute` v3.30.1 — compiles `src/index.js` to a WebAssembly binary (`bin/main.wasm`) via `js-compute-runtime`
-- **Web Framework:** `@fastly/expressly` v2.3.0 — Express-style routing library for Fastly Compute
-- **Fastly Management SDK:** `fastly` v7.10.0 (dev) — Fastly API client, used for tooling/deployment scripting
-- **CLI:** `@fastly/cli` v10.14.0 (dev) — Fastly CLI for local development (`fastly compute serve`) and deployment (`fastly compute publish`)
-- **Utility library:** `lodash` v4.17.21 (dev)
+- **Language:** JavaScript (Node.js-compatible toolchain, targeting WebAssembly)
+- **Runtime:** [Fastly Compute](https://developer.fastly.com/learning/compute/) — JavaScript executed at the edge via `@fastly/js-compute` (^3.30.1), compiled to WebAssembly (WASM)
+- **Framework:** `@fastly/expressly` (^2.3.0) — Express-style routing layer for Fastly Compute
+- **Notable Libraries:**
+  - `lodash` (^4.17.21) — general-purpose utility library (dev dependency)
+  - `fastly` (^7.10.0) — Fastly API client (dev dependency, used for local tooling/publish)
+  - `@fastly/cli` (^10.14.0) — Fastly CLI for build, local dev, and deployment (dev dependency)
 
 ## Architecture Patterns
 
-- **Edge Compute / Request-Intercept pattern:** The service runs entirely at the Fastly edge as a WebAssembly Compute application. All logic executes on incoming HTTP requests at the CDN layer — there is no traditional origin server.
-- **Reverse-proxy with mutation:** Incoming requests for site pages are proxied upstream to a configured backend (`fastly.github.io` by default); before forwarding, the service increments a hit counter in a KV Store keyed by the request path.
-- **Stateful edge with KV Store:** Persistent state (page hit counts) is maintained in a Fastly-managed KV Store named `pagehits`, accessed directly from edge worker code.
-- **Routing via Expressly:** URL routing is handled declaratively using the Expressly middleware framework within `src/index.js`. Two logical route groups are evident: pass-through proxy routes (incrementing counters) and a synthetic `/stats` route (reads and renders all KV entries as HTML).
-- **Single-file application:** All application logic resides in `src/index.js`; no layered directory structure is used.
+- **Edge Computing / Serverless at the Edge:** The service runs as a Fastly Compute application, meaning request handling logic executes at Fastly's globally distributed edge PoPs rather than in a centralised data centre.
+- **Reverse Proxy + Request Enrichment:** Incoming requests are proxied to an upstream origin (`fastly.github.io` by default); the edge layer intercepts requests to increment hit counters before forwarding, and intercepts `/stats` routes to return synthetic responses.
+- **Routing via Middleware Framework:** `@fastly/expressly` provides Express-style route registration, giving the single entry-point (`src/index.js`) a layered request-handling structure.
+- **Edge-Side Data Store (KV Store):** A Fastly KV Store named `pagehits` is used to persist and retrieve page hit counts. Reads and writes are performed at the edge without a traditional backend database.
+- **Synthetic Response Generation:** The `/stats` route constructs and returns an HTML response entirely at the edge, without hitting the origin.
 
 ## Database & Data Ownership
 
-- **Datastore type:** Fastly KV Store (globally distributed key-value store, managed by Fastly infrastructure)
-- **Store name:** `pagehits`
-- **Owned data:** Page hit counts keyed by URL path. Each key is a page path; the value is an incrementing integer hit count.
-- **Schema:** No relational schema or migrations; schema is implicit — key: `string` (URL path), value: `string` (integer count).
-- **Ownership boundary:** The KV Store is provisioned and managed through Fastly's platform (declared in `fastly.toml`). The service has exclusive read/write ownership over the `pagehits` store.
+- **Datastore:** Fastly KV Store (managed, key-value, edge-native — not a traditional relational or document database)
+- **Store Name:** `pagehits`
+- **Ownership:** This service owns the `pagehits` KV Store. Each key corresponds to a URL path; the associated value is the cumulative hit count for that page.
+- **Schema:** No formal schema; keys are page path strings, values are integer hit counts.
+- No relational DB tables or ORM models are present.
 
 ## Dependencies
 
 ### Runtime Dependencies
 | Dependency | Type | Purpose |
 |---|---|---|
-| `@fastly/js-compute` v3.30.1 | Runtime | Fastly Compute JS SDK; provides `fetch`, KV Store APIs, and the `js-compute-runtime` compiler |
-| `@fastly/expressly` v2.3.0 | Runtime | HTTP routing framework for Fastly Compute |
-| **Fastly KV Store** (`pagehits`) | Runtime (platform) | Persistent edge storage for hit counts |
-| **Backend origin** (`fastly.github.io`) | Runtime (upstream) | Default proxied origin; configurable in `fastly.toml` |
+| `@fastly/js-compute` (^3.30.1) | Runtime | Core Fastly Compute JavaScript SDK; provides access to KV Store, backends, request/response APIs |
+| `@fastly/expressly` (^2.3.0) | Runtime | Edge-compatible Express-style router |
 
 ### Build / Development Dependencies
 | Dependency | Type | Purpose |
 |---|---|---|
-| `@fastly/cli` v10.14.0 | Build/Dev | Local dev server (`serve`) and deployment (`publish`) |
-| `fastly` v7.10.0 | Build/Dev | Fastly REST API client (tooling/scripting) |
-| `lodash` v4.17.21 | Build/Dev | General-purpose utility functions (used during build or in source) |
+| `@fastly/cli` (^10.14.0) | Build/Dev | Fastly CLI; local dev server (`fastly compute serve`) and deployment (`fastly compute publish`) |
+| `fastly` (^7.10.0) | Build/Dev | Fastly API client; used by the CLI and tooling during publish |
+| `lodash` (^4.17.21) | Build/Dev | General utility functions (used during build/bundle; classified as devDependency in `package.json`) |
+
+### External Service Dependencies
+| Service | Purpose |
+|---|---|
+| `fastly.github.io` (default backend, named `blog`) | Origin website proxied by the edge application; configurable via `fastly.toml` |
+| Fastly KV Store (`pagehits`) | Edge-native key-value store for persisting hit count data |
 
 ## Deployment Model
 
-- **Build output:** `src/index.js` is compiled to `bin/main.wasm` using `js-compute-runtime` (`npm run build`)
-- **Deployment target:** Fastly Compute service — the `.wasm` binary is uploaded to Fastly's edge network via `fastly compute publish` (`npm run deploy`); there is no container image or Kubernetes involvement
-- **Local development:** `fastly compute serve` (`npm start`) runs a local Compute emulator
-- **Configuration:** `fastly.toml` (not shown in full) declares the service, backend addresses (e.g., `[setup.backends.blog]`), and KV Store bindings; the `root` URL path is a variable in `src/index.js`
-- **Ports:** _Not determinable from code._ (managed by Fastly's edge infrastructure; standard HTTPS 443 at the edge)
-- **Environment variables:** `FASTLY_API_TOKEN` is required for deployment authentication
-- **Containerisation/Orchestration:** None — deployment is fully managed by Fastly's platform (no Dockerfile, no Kubernetes manifests)
-- **Health/readiness endpoints:** _Not determinable from code._
+- **Build Output:** The `build` script compiles `src/index.js` to a WebAssembly binary at `bin/main.wasm` using `js-compute-runtime`:
+  ```
+  js-compute-runtime src/index.js bin/main.wasm
+  ```
+- **Deployment Target:** Fastly Compute platform (edge, not a container or Kubernetes cluster). There is no Dockerfile or Kubernetes/Helm configuration.
+- **Deployment Command:** `fastly compute publish` — packages the WASM binary and uploads it to a Fastly Compute service via the Fastly API.
+- **Local Development:** `fastly compute serve` runs a local emulator of the Compute runtime.
+- **Configuration File:** `fastly.toml` — defines the Compute service, the `blog` backend address (`fastly.github.io`), and the `pagehits` KV Store setup under `[setup]`.
+- **Ports:** _Not determinable from code._ — port binding is managed entirely by the Fastly edge platform.
+- **Environment Configuration:**
+  - `FASTLY_API_TOKEN` environment variable required for deployment/CLI authentication.
+  - Backend URL and site root path (`root` variable in `src/index.js`) must be configured before first deployment.
+- **Health/Readiness Endpoints:** _Not determinable from code._ — health checks are not applicable in the Fastly Compute execution model; availability is managed by the Fastly platform.

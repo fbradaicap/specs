@@ -5,36 +5,38 @@ commit: 8f82dfcca2f12d9460d2444092f6adc817d0afc5
 model: claude-sonnet-4-6
 prompt_version: v1
 input_hash: 40a68b7dd1ff3de50a10db8798da6bbe3cf22a3b2260e27cf990cd550d39f66f
-generated_at: 2026-06-30T14:56:25.386423828+02:00
+generated_at: 2026-06-30T14:56:44.326295242+02:00
 generator: specsync
 ---
 
 ## Business Purpose
-
-This service provides a **page hit counter** capability for websites, deployed as a Fastly Compute edge application. It intercepts incoming HTTP requests to a configured origin site, increments a per-page visit count stored in a Fastly KV Store, and exposes a statistics endpoint that reports cumulative hit counts per page. It exists to add lightweight, edge-native analytics to any static or dynamic website without backend infrastructure changes.
+This service implements a page hit counter running on Fastly's edge compute network. It intercepts requests to a configured origin website, records per-page view counts in a Fastly KV Store named `pagehits`, and exposes a statistics endpoint that lists all tracked pages along with their hit totals. It exists to demonstrate and provide edge-native analytics augmentation of a static site without requiring any server-side infrastructure.
 
 ## Domain Scope (DDD Bounded Context)
 
-- **Bounded context:** Edge analytics / page traffic tracking.
-- **Core entities / aggregates:**
-  - **PageHit** — a keyed counter entry in the `pagehits` KV Store, representing the cumulative hit count for a specific URL path.
+- **Bounded context:** Edge analytics / page-view tracking.
+- **Core domain entities / aggregates:**
+  - **PageHit** — a keyed counter entry in the `pagehits` KV Store, where the key is a page path and the value is the cumulative hit count.
 - **Relationships to neighbouring contexts:**
-  - Upstream: an origin website backend (default: `fastly.github.io/my-site/`) — the hit counter proxies all page requests to it.
-  - No downstream consumers detected; the stats page is a human-facing read surface, not an event or API feed.
+  - **Upstream:** Any origin website (default: `fastly.github.io/my-site/`) — this service proxies and enriches requests to it.
+  - **Downstream:** None detected; the KV Store is internal to this service. The `/stats` route surfaces aggregated data to end-users.
 
 ## Use Cases / User Stories
 
-- **As a website visitor**, I want to browse pages on the origin site so that my visit is transparently proxied and counted without any change to my experience.
-- **As a site owner**, I want each page request to automatically increment that page's hit count in the `pagehits` KV Store so that I have an accurate record of page popularity.
-- **As a site owner**, I want to view a `/stats` page listing all tracked URLs and their cumulative hit counts so that I can understand traffic patterns across my site.
-- **As a developer**, I want to configure a custom origin domain and root path (via `fastly.toml` and `src/index.js`) so that I can apply the hit counter to my own website.
+- **As a site visitor**, I want pages I browse to be transparently proxied through the edge so that my experience is unaffected while my visit is silently counted.
+  - Evidence: each inbound page request increments the corresponding counter in the `pagehits` KV Store before (or after) being forwarded to the origin backend.
+- **As a site owner / analyst**, I want to view a summary page listing all tracked pages and their hit counts so that I can understand which content is most popular.
+  - Evidence: README documents a `/stats` (e.g. `/my-site/stats/`) route that returns a synthetic HTML page with the per-page hit data.
+- **As a developer**, I want to configure my own origin domain and root path so that I can apply the hit-counter logic to any website.
+  - Evidence: README instructs changing `fastly.toml` backend address and the `root` variable in `src/index.js`.
+- **As a developer**, I want to deploy the application to Fastly Compute with a single CLI command (`fastly compute publish`) so that the edge service is live without managing servers.
 
 ## Business Rules
 
-- Every incoming page request **must** increment the corresponding entry in the `pagehits` KV Store by 1 before (or while) proxying to the origin. (inferred)
-- The KV Store is named exactly `pagehits`; this name is fixed and referenced in configuration.
-- The stats endpoint is served at the path `<root>/stats/` (default: `/my-site/stats/`) and returns a synthetic HTML page — it is **not** proxied to the origin.
-- The `root` variable in `src/index.js` defines the base path prefix; requests outside this root are not subject to hit counting. (inferred)
-- The origin backend address must be set **before first deployment**; changing it post-deployment requires use of the Fastly CLI directly, not just a code change.
-- No authentication or access control is defined for the `/stats` endpoint — it is publicly accessible. (inferred)
-- Hit counts are persisted in a KV Store (not in-memory), ensuring counts survive edge node restarts and are durable across requests. (inferred)
+- Every incoming request for a page under the configured `root` path **must** increment that page's counter in the `pagehits` KV Store by 1. (inferred)
+- The `pagehits` KV Store **must** be created and linked to the service before deployment; the store name is fixed as `pagehits`. (inferred from README)
+- The `/stats` route **must not** proxy to the origin; it returns a synthetic HTML response generated from KV Store data instead of forwarding the request. (inferred)
+- Requests are routed via Expressly; unrecognised routes are presumed to be forwarded to the origin backend. (inferred)
+- The origin backend address and the `root` path variable **must** be configured prior to first deployment; changing the backend address after deployment requires use of the Fastly CLI rather than redeployment alone.
+- A valid `FASTLY_API_TOKEN` environment variable (or equivalent CLI authentication) is required to publish the service. (inferred from README)
+- The `root` variable defaults to `/my-site/`; all hit-counter tracking and stats scoping is relative to this root path. (inferred)
