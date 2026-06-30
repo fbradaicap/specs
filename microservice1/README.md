@@ -9,7 +9,7 @@
 
 - **Source commit:** `67a1a3cf92762515763f4e7d8cea0cfc4eeb30c1`
 - **Languages:** Java
-- **Model:** claude-sonnet-4-6
-- **Generated:** 2026-06-30T16:51:42.511630771+02:00
+- **Model:** anthropic:claude-sonnet-4-6
+- **Generated:** 2026-06-30T17:38:56.381083786+02:00
 
 _Maintained automatically by SpecSync._

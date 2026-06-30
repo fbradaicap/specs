@@ -1,55 +1,53 @@
 ---
 repo: microservice1
 spec_type: non_functional
-commit: 954d85981a924722137ae7edea41a6ffbf5b2444
-model: claude-sonnet-4-6
+commit: 67a1a3cf92762515763f4e7d8cea0cfc4eeb30c1
+model: anthropic:claude-sonnet-4-6
 prompt_version: v1
-input_hash: d7c1d6d7e1a8acbea7e48f4ff300b586a4fb468527117a2559d0a34869f35a63
-generated_at: 2026-06-30T16:00:13.254039078+02:00
+input_hash: 50ee4e55544c2ceaf0a54f62861f4c7d0de3a524a44ec92fd862370af5bb0606
+generated_at: 2026-06-30T17:38:56.381083786+02:00
 generator: specsync
 ---
 
 ## Performance
 
-No explicit latency targets, throughput limits, timeout configurations, connection pool settings, or caching directives are present in `application.properties` or any other configuration file. The service runs on Quarkus 3.37.0 with the `quarkus-rest` (RESTEasy Reactive) extension, which uses a non-blocking I/O model backed by Vert.x; default Quarkus worker-thread and event-loop sizing applies but no overrides are configured.
+No explicit latency targets, throughput limits, or timeout configurations are present in `application.properties` or the source code. Quarkus 3.37.0 defaults apply.
 
-- **HTTP port:** 8080 (default Quarkus)
-- **JVM heap:** Dynamically sized at runtime via the `run-java.sh` script; default `JAVA_MAX_MEM_RATIO=50` (50% of container memory limit) and `JAVA_INITIAL_MEM_RATIO=25` apply unless overridden through environment variables.
-- **GC:** Defaults to `-XX:+UseParallelGC` unless `GC_CONTAINER_OPTIONS` is set.
-- **Native build:** Supported via GraalVM / container-based native build; would eliminate JVM warm-up overhead (target).
-
-_No explicit latency/throughput targets, timeout values, or caching configuration are determinable from the code._
+- **HTTP port:** 8080 (all interfaces, set via `JAVA_OPTS_APPEND` in Dockerfiles).
+- **JVM heap:** Managed dynamically by the `run-java.sh` script in the UBI OpenJDK 21 base image. Default `JAVA_MAX_MEM_RATIO=50` (50 % of container memory limit) and `JAVA_INITIAL_MEM_RATIO=25` apply unless overridden at runtime; no explicit `-Xmx`/`-Xms` values are configured.
+- **GC:** Defaults to `-XX:+UseParallelGC` via `run-java.sh`; no custom GC flags are set.
+- **Connection/thread pools:** Quarkus REST (Vert.x-based) defaults — no custom pool sizes configured.
+- **Caching:** _Not determinable from code._
+- **Native executable profile** is available (`mvn package -Dnative`), which would reduce startup time and memory footprint, but is not the default build.
 
 ## Scalability
 
-- **Statelessness:** The single resource class (`HelloResource`) holds no instance state and performs no database or external I/O, making the service inherently stateless and suitable for horizontal scaling.
-- **Containerisation:** Four Docker build targets are provided (JVM, legacy-JAR, native, native-micro), all binding to `0.0.0.0:8080`, which is compatible with orchestrated horizontal scaling.
-- **Replica counts / autoscaling:** _Not determinable from code._ No Kubernetes manifests, Helm charts, or autoscaling annotations are present in the snapshot.
-- **Partitioning / sharding:** Not applicable; no data layer exists.
+- **Statelessness:** The single resource class (`HelloResource`) holds no instance state, making the service inherently stateless and horizontally scalable (target).
+- **Replica counts / autoscaling:** No Kubernetes manifests, Helm charts, or autoscaling annotations are present. _Not determinable from code._
+- **Horizontal scaling approach:** Containerisation is fully supported via four provided Dockerfiles (JVM, legacy-jar, native, native-micro); container-aware heap sizing is built into the base image. Horizontal scaling is architecturally possible (target) but no orchestration configuration is provided.
+- **Partitioning/sharding:** _Not determinable from code._ No database or messaging layer exists.
 
 ## Security
 
-- **AuthN/AuthZ:** No authentication or authorisation mechanism is configured. The `/hello` endpoint is publicly accessible with no security middleware present.
-- **Transport security (TLS):** Not configured. `application.properties` is empty; no `quarkus.http.ssl.*` properties are set. The container exposes plain HTTP on port 8080.
-- **Secrets handling:** No secrets, credentials, or secret-management integrations (Vault, Kubernetes secrets, etc.) are referenced anywhere in the codebase.
-- **Input validation:** The endpoint accepts no input parameters; no validation framework is applied.
-- **Container user:** Containers run as non-root UID `185` (JVM images) or `1001` (native images), following least-privilege practice.
-- **Security dependencies/middleware:** None detected beyond the Quarkus defaults.
+- **AuthN/AuthZ:** No authentication or authorisation mechanisms are configured. The `/hello` endpoint is publicly accessible with no security middleware present.
+- **Transport security (TLS):** Not configured. HTTP only on port 8080; no TLS/HTTPS settings appear in `application.properties` or Dockerfiles.
+- **Secrets handling:** No secrets, credentials, or vault integrations are referenced anywhere in the codebase.
+- **Input validation:** The sole endpoint (`GET /hello`) accepts no user-supplied input; no validation framework is in use.
+- **Container hardening:** Dockerfiles run the process as a non-root user (UID `185` for JVM images, UID `1001` for native images), which is a positive security baseline.
+- **Security dependencies/middleware:** None detected (`quarkus-oidc`, `quarkus-security`, `quarkus-smallrye-jwt`, etc. are absent).
 
 ## Observability
 
-- **Logging:** The JBoss Log Manager (`org.jboss.logmanager.LogManager`) is configured as the JUL manager in both the Maven Surefire/Failsafe plugins and the Docker `JAVA_OPTS_APPEND`, enabling Quarkus structured logging to stdout. No custom log categories, levels, or appenders are defined in `application.properties`.
-- **Metrics:** `quarkus-micrometer` or `quarkus-smallrye-metrics` are not included as dependencies; no metrics endpoint is exposed.
-- **Tracing:** No distributed tracing extension (e.g., `quarkus-opentelemetry`) is present.
-- **Health / readiness endpoints:** `quarkus-smallrye-health` is not listed as a dependency; no `/q/health` or `/q/health/ready` endpoints are configured.
-- **Dev UI:** Available at `http://localhost:8080/q/dev/` in dev mode only (Quarkus built-in).
-
-_Metrics, tracing, and health probes are not determinable from code beyond the absence noted above._
+- **Logging:** JBoss LogManager (`org.jboss.logmanager.LogManager`) is configured as the Java logging manager in all Dockerfiles and in Maven Surefire/Failsafe configuration. Log output goes to stdout by default (no file appender configured).
+- **Metrics:** No metrics extension (e.g., `quarkus-micrometer`, `quarkus-smallrye-metrics`) is present. _Not determinable from code._
+- **Tracing:** No tracing extension (e.g., `quarkus-opentelemetry`) is present. _Not determinable from code._
+- **Health/readiness endpoints:** No `quarkus-smallrye-health` dependency is included. Quarkus built-in liveness/readiness probes (`/q/health`) are not available in this build.
+- **Dev UI:** Available at `http://localhost:8080/q/dev/` in `quarkus:dev` mode only; not exposed in production images.
 
 ## Reliability
 
-- **Resilience patterns:** No retry, circuit-breaker, bulkhead, or rate-limiting logic is present. The `quarkus-fault-tolerance` (SmallRye Fault Tolerance) extension is not included.
-- **Timeouts:** No request or client timeout is configured.
-- **Idempotency:** The sole endpoint (`GET /hello`) is read-only and side-effect-free, making it naturally idempotent.
-- **Failure handling:** No explicit error handlers or exception mappers beyond Quarkus defaults are defined.
-- **Availability / recovery:** No replica minimums, pod disruption budgets, or liveness probes are specified. Recovery behaviour relies entirely on the container orchestration layer, which is not defined in this repository.
+- **Retries / circuit breakers:** No fault-tolerance extension (e.g., `quarkus-smallrye-fault-tolerance`) is present; no retry, circuit-breaker, or bulkhead annotations are used.
+- **Timeouts:** No request timeout or idle-connection timeout is configured.
+- **Idempotency:** The single `GET /hello` endpoint is inherently idempotent by HTTP semantics.
+- **Failure handling:** No explicit exception mappers or error-handling logic beyond Quarkus defaults are implemented.
+- **Availability / recovery:** No readiness/liveness probes, no persistent state, and no dependency on external systems; recovery is purely a function of container restart policy, which is not configured in the provided manifests. _Not determinable from code._
