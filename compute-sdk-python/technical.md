@@ -5,89 +5,99 @@ commit: 10d556298a332e54635734509db5b7e60e4e181d
 model: claude-sonnet-4-6
 prompt_version: v1
 input_hash: e07c5edd4a6503c59acf412f2b47c47848f718785c9d441753ea4a4f4e9e1ef6
-generated_at: 2026-06-30T14:57:10.797313958+02:00
+generated_at: 2026-06-30T14:57:33.154103392+02:00
 generator: specsync
 ---
 
 ## Tech Stack
 
-- **Python**: ≥ 3.12 (target: 3.14 for type-checking); primary application language
-- **Rust**: 2021 edition (crates `fastly-compute-py`, `wasiless`); used for native extension and WASM tooling
-- **Build backend**: [Maturin](https://github.com/PyO3/maturin) ≥ 1.0, < 2.0 — builds the mixed Python/Rust package and emits a stable-ABI (`abi3`) wheel targeting CPython 3.12+
-- **PyO3**: 0.28.3 with `abi3-py312` feature — Rust/Python FFI bridge
-- **WSGI integration**: `fastly_compute.wsgi.WsgiHttpIncoming` — wraps WSGI-compatible frameworks (Flask, Bottle) for Fastly Compute
-- **WebAssembly toolchain**: `componentize-py` (v0.23.0, bytecodealliance), `wit-component` 0.244, `wit-parser` 0.244, `wac-graph`/`wac-types`/`wac-parser` 0.8 — compiles Python apps to Wasm components
-- **WIT bindings**: `wit-bindgen` 0.46.0 (Rust), `wit_world` Python bindings (generated); WIT interface definitions in `wit/`
-- **Test framework**: pytest ≥ 9.0.3, with `syrupy` 5.0.0 (snapshot testing), `requests` ≥ 2.32.5
-- **Linting/type-checking**: Ruff ≥ 0.12.11 (lint + format), Pyrefly ≥ 0.49.0
-- **Notable Python runtime dependencies** (examples/test extras): Flask ≥ 3.1.2, Bottle ≥ 0.12.25
+- **Primary Language**: Python ≥ 3.12 (targeting up to 3.14 for type checking); Rust (edition 2021/2024)
+- **Build System**: [Maturin](https://www.maturin.rs/) ≥ 1.0, < 2.0 — builds a mixed Python/Rust extension wheel using the `abi3-py312` stable ABI, emitting a single `cp312-abi3-*` wheel usable on CPython 3.12+
+- **Rust Crates**:
+  - `fastly-compute-py` (v0.1.2) — `cdylib`/`rlib` exposing a Python extension module via [PyO3](https://pyo3.rs/) 0.28.3 and a `fastly_compute_py_build` CLI binary
+  - `wasiless` (v0.1.0) — `cdylib` providing minimal/trapping WASI interface implementations via `wit-bindgen` 0.46
+- **Notable Rust Dependencies**: `componentize-py` (git, tag v0.23.0 from bytecodealliance), `wac-graph/wac-types/wac-parser` 0.8, `wit-parser`/`wit-component` 0.244, `wasm-metadata` 0.245, `pyo3` 0.28.3, `clap` 4, `serde`/`serde_json`, `toml`, `tempfile`, `anyhow`, `indexmap`
+- **Python Runtime Dependencies** (core `fastly-compute` package): none at runtime
+- **Python Test Dependencies**: `pytest` ≥ 9.0.3, `requests` ≥ 2.32.5, `bottle` ≥ 0.12.25, `syrupy` 5.0.0, `tomli-w` ≥ 1.0
+- **Python Dev Dependencies**: `ruff` ≥ 0.12.11, `pyrefly` ≥ 0.49, `jinja2` ≥ 3.1.6, `maturin` ≥ 1.11.5
+- **Example Application Frameworks**: [Bottle](https://bottlepy.org/) ≥ 0.12.25, [Flask](https://flask.palletsprojects.com/) ≥ 3.1.2
+
+---
 
 ## Architecture Patterns
 
-- **SDK / library architecture**: The repository is not a running microservice but a Python SDK for Fastly's Compute@Edge platform, packaged as a distributable wheel.
-- **Mixed-language native extension**: The core compilation tooling is implemented in Rust (`crates/fastly-compute-py`) and exposed to Python via a PyO3 `cdylib` extension module (`fastly_compute._fastly_compute_py`). A companion CLI binary (`fastly_compute_py_build`) is also produced from the same crate.
-- **WSGI adapter layer**: `fastly_compute.wsgi.WsgiHttpIncoming` bridges standard Python WSGI apps (Flask, Bottle) to the Fastly Compute HTTP incoming request model, allowing unmodified WSGI applications to run on the Compute platform.
-- **WIT-driven host bindings**: Host APIs (HTTP, config stores, rate counters, penalty boxes, log endpoints, `compute_runtime`) are exposed through WIT interface definitions (`wit/`) compiled to Python bindings (`wit_world.imports.*`). The `FastlyResource[T]` generic base class (`fastly_compute/_resource.py`) provides uniform context-manager lifecycle management over these WIT-generated resource handles.
-- **Error remapping decorator pattern**: `fastly_compute.runtime_patching.decorators.remap_wit_errors` converts WIT `result`-style errors (surfaced as `componentize_py_types.Err`) into typed Python exceptions deriving from `FastlyError`, providing a Pythonic error handling interface over the WIT ABI.
-- **Test harness with Viceroy integration**: `fastly_compute.testing.ViceroyTestBase` / `AutoViceroyTestBase` manage a local [Viceroy](https://github.com/fastly/Viceroy) process (Fastly's local Compute runtime) with dynamic port allocation, and expose `get`/`post`/`request` helpers. A pytest plugin (`fastly_compute.pytest_plugin`) hooks into test failure events to surface Viceroy logs automatically.
-- **Workspace layout**: Cargo workspace with two crates (`fastly-compute-py`, `wasiless`); Python package under `fastly_compute/`; examples are independent `pyproject.toml` projects that depend on the SDK via an editable path reference.
+- **SDK / Library Package** — `compute-sdk-python` is not a running service; it is a Python SDK distributed as a wheel that application authors import to build and deploy Fastly Compute (WebAssembly/WASM) edge functions.
+- **Mixed Native Extension**: A Rust `cdylib` compiled by Maturin and exposed as `fastly_compute._fastly_compute_py`. Python consumer code calls into the Rust layer for build-time WASM composition and toolchain utilities.
+- **WIT/Component Model Integration**: The SDK bridges Python WSGI applications to the [WebAssembly Component Model](https://component-model.bytecodealliance.org/) via `componentize-py`. WIT interface bindings (`wit_world.imports.*`) are generated and shipped so user code can call Fastly Compute host APIs (e.g., `compute_runtime`, `types`).
+- **WSGI Bridge**: `fastly_compute.wsgi.WsgiHttpIncoming` wraps standard Python WSGI apps (Bottle, Flask) as Fastly Compute HTTP handlers, making the SDK framework-agnostic.
+- **Resource Wrapper Pattern**: `FastlyResource[T]` (generic base class) provides uniform context-manager lifecycle management over WIT-generated resource handles (`ConfigStore`, `RateCounter`, `PenaltyBox`, `LogEndpoint`, etc.).
+- **Error Remapping Layer**: `remap_wit_errors` decorator (`fastly_compute.runtime_patching.decorators`) translates WIT result-based errors (`componentize_py_types.Err`) into idiomatic Python exception hierarchies (`FastlyError`, `UnexpectedFastlyError`).
+- **Test Infrastructure**: `ViceroyTestBase` / `AutoViceroyTestBase` spin up a local [Viceroy](https://github.com/fastly/Viceroy) (Fastly Compute local runtime) process against a built `.wasm` file, with dynamic port allocation. A pytest plugin (`fastly_compute.pytest_plugin`) captures and surfaces Viceroy logs on test failure.
+- **Code Generation**: `scripts/generate_patches/` (Jinja2-driven) generates runtime patches (`fastly_compute/runtime_patching/patches.py`).
+
+---
 
 ## Database & Data Ownership
 
-This service owns no datastore or persistent schema. No database tables or models are defined. The SDK provides access to Fastly Compute host resources (config stores, rate counters, penalty boxes) that are owned and managed by the Fastly platform, not by this SDK itself.
+This service owns no datastore and no persistent schema. No database tables, migrations, or data models are present. The SDK provides access to Fastly-hosted stores (e.g., `ConfigStore`) via WIT host API bindings, but those stores are owned and managed externally by the Fastly platform.
+
+---
 
 ## Dependencies
 
-### Runtime (Python package, no mandatory install-time dependencies)
-- **`fastly_compute` package**: declares zero mandatory Python dependencies (`dependencies = []` in `pyproject.toml`); all host integration is via the native extension and WIT-generated bindings.
+### Runtime (published wheel — zero Python dependencies)
+The core `fastly-compute` package declares **no runtime Python dependencies** (`dependencies = []` in `pyproject.toml`). All host API access occurs through the compiled Rust native extension and WIT bindings at the Fastly Compute edge.
 
-### Runtime (native extension, Rust — compiled into the wheel)
-| Crate | Version | Purpose |
-|---|---|---|
-| `componentize-py` | git tag v0.23.0 | Converts Python apps + WIT worlds to Wasm components |
-| `wac-graph` / `wac-types` / `wac-parser` | 0.8 | Wasm component composition |
-| `wit-parser` / `wit-component` | 0.244 (runtime), 0.219 (build) | WIT interface parsing and component encoding |
-| `wasm-metadata` | 0.245 | Wasm binary metadata manipulation |
-| `pyo3` | 0.28.3 (`abi3-py312`) | Python/Rust FFI |
-| `clap` | 4 | CLI argument parsing (`fastly_compute_py_build` binary) |
-| `anyhow`, `serde`/`serde_json`, `toml`, `log`/`env_logger`, `tempfile`, `futures`, `indexmap` | various | General Rust utilities |
-| `wit-bindgen` | 0.46.0 (in `wasiless`) | WIT binding code generation for WASI stub crate |
+### Build / Compilation
+| Dependency | Role |
+|---|---|
+| `maturin` ≥ 1.0 | Python/Rust wheel builder |
+| `componentize-py` v0.23.0 | Converts Python + WIT → WASM component |
+| `wac-graph` / `wac-types` / `wac-parser` 0.8 | WebAssembly component composition |
+| `wit-parser` / `wit-component` 0.244 | WIT interface parsing and component encoding |
+| `wasm-metadata` 0.245 | WASM module metadata manipulation |
+| `pyo3` 0.28.3 | Rust ↔ Python FFI |
+| `wit-bindgen` 0.46 (`wasiless` crate) | WASI stub generation |
+| `jinja2` ≥ 3.1.6 | Template engine for patch generation scripts |
 
-### Build-time (Python)
-| Package | Version | Purpose |
-|---|---|---|
-| `maturin` | ≥ 1.0, < 2.0 | Build backend; compiles Rust extension and packages wheel |
-| `jinja2` | ≥ 3.1.6 | Used by `scripts/generate_patches` for code generation |
+### Test
+| Dependency | Role |
+|---|---|
+| `pytest` ≥ 9.0.3 | Test runner |
+| `requests` ≥ 2.32.5 | HTTP client used in `ViceroyTestBase` |
+| `bottle` ≥ 0.12.25 | WSGI framework used in test fixtures |
+| `syrupy` 5.0.0 | Snapshot testing |
+| `tomli-w` ≥ 1.0 | TOML serialisation in test helpers |
+| Viceroy (external binary) | Local Fastly Compute runtime; must be present on `PATH` |
 
-### Test/Dev extras (not distributed)
-| Package | Version | Purpose |
-|---|---|---|
-| `pytest` | ≥ 9.0.3, < 10 | Test runner |
-| `requests` | ≥ 2.32.5, < 3 | HTTP client for Viceroy-based integration tests |
-| `syrupy` | 5.0.0 | Snapshot assertions |
-| `tomli-w` | ≥ 1.0, < 2 | TOML serialisation in tests |
-| `bottle` | ≥ 0.12.25 | WSGI framework used in test fixtures and examples |
-| `flask` | ≥ 3.1.2, < 4 | WSGI framework used in examples and type-check CI |
-| `ruff` | ≥ 0.12.11, < 0.13 | Linter and formatter |
-| `pyrefly` | ≥ 0.49, < 0.50 | Static type checker |
+### External Platform
+- **Fastly Compute host APIs** — accessed entirely through WIT bindings at edge runtime; no network calls from the SDK itself at build time.
 
-### External runtime process
-- **Viceroy** (Fastly's local Compute runtime): invoked as a subprocess by the test harness; not a Python package dependency but a required binary for running the test suite.
+---
 
 ## Deployment Model
 
-This repository is a **distributable SDK package**, not a deployed service. There is no Dockerfile, Kubernetes manifest, Helm chart, or Docker Compose file present. Deployment is via PyPI wheel distribution.
+This repository produces a **distributable Python package** (wheel), not a deployed service.
 
 **Build**:
-- `maturin build` (or `maturin develop` for editable installs) compiles the Rust extension (`crates/fastly-compute-py`) and packages everything into a `cp312-abi3-*` platform wheel.
-- `make test` (per README) builds the WASM artifact and runs the pytest suite against a local Viceroy process.
-- `uv run pytest -v -s` is the direct test invocation.
+```
+maturin build --features pyo3/abi3-py312
+```
+Maturin compiles the `fastly-compute-py` Rust crate and packages it together with the `fastly_compute/` Python sources into a single `cp312-abi3-*` wheel (stable ABI, works on CPython 3.12+).
 
-**Distribution**:
-- Package name: `fastly-compute`, version `0.1.2`
-- Exposes a console script entry point: `fastly-compute-py` → `fastly_compute.fastly_compute_py:main`
-- Single wheel covers CPython ≥ 3.12 on a given platform (stable ABI).
+**Installed CLI entry point**:
+```
+fastly-compute-py  →  fastly_compute.fastly_compute_py:main
+```
+This CLI (backed by the `fastly_compute_py_build` Rust binary) drives the WASM component build pipeline.
 
-**Ports / health endpoints**: _Not determinable from code._ (SDK library; no HTTP server is embedded in the package itself.)
+**Container / Kubernetes / Ports**: _Not determinable from code._ No Dockerfile, Docker Compose file, Kubernetes manifests, or Helm charts are present. The SDK itself runs inside the Fastly Compute (WASM) edge environment, not in a container.
 
-**Environment configuration**: _Not determinable from code._ (No `.env`, k8s ConfigMap, or `os.environ` references found in the reviewed sources; runtime configuration of built Compute apps is platform-managed by Fastly.)
+**Testing / local development**:
+```bash
+make test           # build WASM + run pytest
+uv run pytest -v -s # run tests directly (requires pre-built WASM)
+```
+Tests require a compiled `.wasm` file (default: `app.wasm`) and a Viceroy binary available in the environment. Viceroy is launched as a subprocess on a dynamically allocated local port.
+
+**Environment configuration**: _Not determinable from code._ No `.env`, `k8s` ConfigMap, or explicit `os.environ` reads are surfaced in the provided manifests beyond `REQUEST_METHOD` and `PATH_INFO` WSGI environ keys.

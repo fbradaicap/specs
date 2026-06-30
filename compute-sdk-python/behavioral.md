@@ -5,61 +5,62 @@ commit: 10d556298a332e54635734509db5b7e60e4e181d
 model: claude-sonnet-4-6
 prompt_version: v1
 input_hash: e07c5edd4a6503c59acf412f2b47c47848f718785c9d441753ea4a4f4e9e1ef6
-generated_at: 2026-06-30T14:57:10.797313958+02:00
+generated_at: 2026-06-30T14:57:33.154103392+02:00
 generator: specsync
 ---
 
 ## API Contracts
 
-This microservice is a **Python SDK** for Fastly Compute (WebAssembly/WASM edge runtime), not a standalone HTTP service. It provides a framework for building WSGI-based HTTP handlers that run on the Fastly Compute platform. The extracted endpoints are defined within bundled example applications, not the SDK library itself.
+This microservice is a **Python SDK for Fastly Compute** (WebAssembly edge runtime), not a standalone HTTP service. Its "endpoints" are defined in example WSGI applications bundled with the SDK. The protocol is **HTTP/1.1** routed through a WSGI adapter (`fastly_compute.wsgi.WsgiHttpIncoming`).
 
-**Protocol**: HTTP (via WSGI adapter `fastly_compute.wsgi.WsgiHttpIncoming`)
-
-### Example Application Endpoints
-
-The following endpoints are evidenced in the example applications (`bottle-app` and `flask-app`) included in the repository:
+Two example applications (Bottle and Flask) expose identical route sets:
 
 | Method | Path | Purpose | Request | Response |
 |--------|------|---------|---------|---------|
-| ANY | `/hello/<name>` | Returns a plain-text greeting for the given name | Path parameter `name` (string) | `Hello {name}!` (plain text) |
-| ANY | `/info` | Returns runtime and request metadata as JSON | None | JSON object (see below) |
-| ANY | `/error` | Intentionally raises a `RuntimeError` for error-handling tests | None | Unhandled exception / error response |
-| GET | `REQUEST_METHOD` | WSGI environ key access (internal SDK detail) | — | — |
-| GET | `PATH_INFO` | WSGI environ key access (internal SDK detail) | — | — |
+| ANY | `/hello/<name>` | Returns a plain-text greeting using the URL parameter `name` | Path parameter: `name` (string) | Plain text: `Hello {name}!` |
+| ANY | `/info` | Returns runtime diagnostic information as JSON | None | JSON object (see below) |
+| ANY | `/error` | Intentionally raises a `RuntimeError` to exercise error-handling paths | None | Framework-dependent error response |
 
-**`/info` response body (evidenced from source):**
+**`/info` response shape (Bottle variant):**
 
-Bottle variant:
 ```json
 {
   "service": "fastly-compute-python",
   "status": "ok",
   "message": "Hello from Fastly Compute!",
-  "vcpu_time_ms": <int>,
+  "vcpu_time_ms": <integer>,
   "request_method": "<string>",
   "path_info": "<string>",
-  "request_headers": { "<header>": "<value>" }
+  "request_headers": { "<header-name>": "<header-value>" }
 }
 ```
 
-Flask variant adds `"python_version"` and changes `"service"` to `"fastly-compute-python-flask"` and `"message"` to `"Hello from Fastly Compute with Flask!"`.
+**`/info` response shape (Flask variant):**
 
-### SDK Testing Interface
+```json
+{
+  "service": "fastly-compute-python-flask",
+  "status": "ok",
+  "message": "Hello from Fastly Compute with Flask!",
+  "vcpu_time_ms": <integer>,
+  "request_method": "<string>",
+  "path_info": "<string>",
+  "python_version": "<string>",
+  "request_headers": { "<header-name>": "<header-value>" }
+}
+```
 
-The SDK exposes a Python test helper (`fastly_compute.testing.ViceroyTestBase`) with the following synchronous HTTP client methods:
+The `REQUEST_METHOD` and `PATH_INFO` values surfaced in `/info` responses are read from the WSGI environ directly, as evidenced by `request.environ.get("REQUEST_METHOD")` and `request.environ.get("PATH_INFO")` in both example apps.
+
+The SDK's **testing interface** (`fastly_compute.testing.ViceroyTestBase`) exposes the following helper methods for test consumers:
 
 | Method | Signature | Purpose |
 |--------|-----------|---------|
-| `get` | `self.get(path, **kwargs)` | Performs a GET request against the Viceroy-hosted WASM |
-| `post` | `self.post(path, **kwargs)` | Performs a POST request |
-| `request` | `self.request(method, path, **kwargs)` | Performs any HTTP method request |
+| `get` | `self.get(path, **kwargs)` | Issues an HTTP GET against the Viceroy-served WASM |
+| `post` | `self.post(path, **kwargs)` | Issues an HTTP POST |
+| `request` | `self.request(method, path, **kwargs)` | Issues any HTTP method |
 
-Configuration class attributes:
-
-| Attribute | Default | Purpose |
-|-----------|---------|---------|
-| `REQUEST_TIMEOUT` | `10` (seconds) | HTTP request timeout |
-| `WASM_FILE` | `"app.wasm"` | Path to the compiled WASM binary |
+Configuration class attributes: `REQUEST_TIMEOUT` (default: 10 s), `WASM_FILE` (default: `"app.wasm"`).
 
 ---
 
@@ -71,41 +72,43 @@ _Not determinable from code._
 
 ## Input / Output Formats
 
-- **Serialization**: JSON for `/info` endpoint responses (evidenced by dict return values in Flask/Bottle handlers, which both frameworks automatically serialize to `application/json`). Plain text (`text/plain`) for `/hello/<name>`.
-- **Content types**: Determined by the WSGI framework in use (Bottle or Flask); no explicit `Content-Type` overrides are evidenced in the SDK source.
-- **Request format**: Standard HTTP requests routed through the `WsgiHttpIncoming` adapter, which translates Fastly Compute's WIT-based HTTP interface into a WSGI-compatible `environ` dict.
-- **WSGI environ keys used**: `REQUEST_METHOD`, `PATH_INFO` (evidenced in example source).
-- **Pagination**: _Not determinable from code._
-- **Request/response envelopes**: No envelope wrapper; responses are bare JSON objects or plain strings as returned by the WSGI framework.
+- **Serialization:** JSON for the `/info` endpoint (returned as a Python `dict` by the framework, serialized to `application/json` by Bottle/Flask automatically). Plain text (`text/plain`) for `/hello/<name>`.
+- **Content negotiation:** Delegated entirely to the Bottle or Flask WSGI framework; no explicit `Content-Type` negotiation is implemented in the SDK layer.
+- **Pagination:** _Not determinable from code._
+- **Request envelope:** Standard HTTP — no custom envelope or envelope fields are defined.
+- **Response envelope:** None for `/hello/<name>` and `/error`. For `/info`, the JSON object is a flat dictionary with the fields documented above; there is no outer wrapper envelope.
+- **Runtime bindings:** The `vcpu_time_ms` field is populated via the WIT-bound import `compute_runtime.get_vcpu_ms()`, which returns an integer number of milliseconds of vCPU time consumed.
 
 ---
 
 ## Error Handling
 
-### Application-level (`/error` endpoint)
-- The `/error` route intentionally raises `RuntimeError("This is an intentional error for testing purposes")`. The resulting HTTP error response format depends on the WSGI framework (Bottle or Flask) and is _not determinable from code_ beyond an unhandled exception producing a 5xx response.
+**Application-level (`/error` endpoint):**  
+Both example apps raise `RuntimeError("This is an intentional error for testing purposes")` unconditionally. The resulting HTTP status code is determined by the WSGI framework (Bottle/Flask default unhandled-exception behaviour — typically `500 Internal Server Error`); the exact response body is _not determinable from code_.
 
-### SDK Exception Remapping (`remap_wit_errors`)
-The SDK provides a decorator `fastly_compute.runtime_patching.decorators.remap_wit_errors` that maps WIT `result`-type errors (surfaced as `componentize_py_types.Err`) into Python exceptions:
+**SDK exception model (`fastly_compute.exceptions`):**  
+The SDK defines a hierarchy rooted at `FastlyError` for errors originating from Fastly WIT bindings:
 
-| Scenario | Behaviour |
-|----------|-----------|
-| `Err` value type matches a key in the provided mapping dict | Raises the mapped `FastlyError` subclass, passing the `Err` value to its constructor |
-| `Err` value is an enum member matching a key in the mapping dict | Raises the mapped `FastlyError` subclass with no constructor arguments |
-| `Err` value type is not in the mapping | Raises `UnexpectedFastlyError` wrapping the original value (accessible as `.value`) |
+| Exception class | Trigger |
+|---|---|
+| `FastlyError` | Base class for all Fastly API errors |
+| `UnexpectedFastlyError` | Raised when a WIT `Err` value carries a type not present in the provided mapping; preserves the original `.value` |
+| Subclasses (e.g., `BufferTooShortError`, `NegativeHeightError`, `InvalidSyntaxError`, `NotFoundError`) | Raised by `remap_wit_errors` when the `Err` value type matches a declared mapping |
 
-**Exception hierarchy (evidenced):**
-- `FastlyError` — base class for all Fastly API errors
-  - `UnexpectedFastlyError` — wraps unexpected WIT error values; exposes `.value`
-  - User-defined subclasses (e.g., `BufferTooShortError`, `NegativeHeightError`, `InvalidSyntaxError`, `NotFoundError`)
+**`remap_wit_errors` decorator behaviour:**
 
-**HTTP status codes**: _Not determinable from code._ Status codes for error responses are delegated to the underlying WSGI framework.
+- Wraps callables that may raise `componentize_py_types.Err`.
+- Accepts a mapping of `{ErrorType: ExceptionClass}` (or enum member → exception class).
+- On `Err(value=V)`: looks up `type(V)` (or `V` directly for enum members) in the mapping; instantiates the corresponding exception with `V` as its sole constructor argument (for typed errors) or with no arguments (for enum-member matches).
+- If the type is not found in the mapping, raises `UnexpectedFastlyError` preserving `.value`.
 
-### Test Assertions (evidenced in test suite)
-- HTTP `200` is the expected success status for well-formed requests (evidenced by `assert response.status_code == 200` in README).
+**No HTTP-level custom error payload structure** is defined by the SDK itself; error serialization is delegated to the host WSGI framework.
 
 ---
 
 ## Versioning
 
-No URI versioning, header-based versioning, or schema evolution strategy is evidenced in the source. The SDK package version is `0.1.2` (from `pyproject.toml` and `crates/fastly-compute-py/Cargo.toml`), but no API version is propagated into endpoint paths or HTTP headers. _Not determinable from code._
+- The SDK package itself is versioned via `pyproject.toml`: **`version = "0.1.2"`**.
+- The Rust extension crate (`fastly-compute-py`) mirrors this at **`version = "0.1.2"`** in `crates/fastly-compute-py/Cargo.toml`.
+- **No URI versioning, `Accept`-header versioning, or schema evolution strategy** is implemented in the example applications or the SDK's HTTP layer.
+- The Python ABI is pinned to **CPython 3.12+ (abi3-py312)** via maturin/PyO3 configuration, producing a single stable-ABI wheel (`cp312-abi3-*`) compatible with all future CPython versions without rebuilding.

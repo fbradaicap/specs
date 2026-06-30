@@ -10,6 +10,6 @@
 - **Source commit:** `10d556298a332e54635734509db5b7e60e4e181d`
 - **Languages:** Python, Rust
 - **Model:** claude-sonnet-4-6
-- **Generated:** 2026-06-30T14:57:10.797313958+02:00
+- **Generated:** 2026-06-30T14:57:33.154103392+02:00
 
 _Maintained automatically by SpecSync._
