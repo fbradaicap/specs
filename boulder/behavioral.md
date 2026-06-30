@@ -5,15 +5,15 @@ commit: 3e2d852f3cad888de7e0a3c253937290493912bc
 model: claude-sonnet-4-6
 prompt_version: v1
 input_hash: 9cabeedf70a1ffdf15eca52687004aeb1f345306a3d18ec04a399e24757b49a2
-generated_at: 2026-06-30T14:57:58.750743927+02:00
+generated_at: 2026-06-30T14:58:58.292168945+02:00
 generator: specsync
 ---
 
 ## API Contracts
 
-Boulder is an ACME certificate authority implementation (Let's Encrypt CA). All internal service communication uses **gRPC over Protocol Buffers**. There is no REST or GraphQL API evidenced in the proto artifacts; the ACMEv2 HTTP interface is exposed externally on port 4001 but its OpenAPI/HTTP route definitions are not included in the provided snapshot.
+Boulder exposes exclusively **gRPC** (proto3) interfaces. There are no REST/HTTP or GraphQL APIs in the service itself; the ACMEv2 HTTP endpoints (port 4001) are served by the `wfe2` component within the same monorepo. All internal service-to-service communication uses gRPC over mTLS.
 
-### Protocol: gRPC (proto3)
+### Protocol: gRPC / proto3
 
 ---
 
@@ -21,10 +21,7 @@ Boulder is an ACME certificate authority implementation (Let's Encrypt CA). All 
 
 | RPC | Request | Response | Purpose |
 |-----|---------|----------|---------|
-| `Purge` | `PurgeRequest` | `google.protobuf.Empty` | Purge URLs from Akamai CDN cache |
-
-**Message: `PurgeRequest`**
-- `repeated string urls = 1`
+| `Purge` | `PurgeRequest { repeated string urls }` | `google.protobuf.Empty` | Purge a list of URLs from Akamai CDN cache |
 
 ---
 
@@ -32,26 +29,8 @@ Boulder is an ACME certificate authority implementation (Let's Encrypt CA). All 
 
 | RPC | Request | Response | Purpose |
 |-----|---------|----------|---------|
-| `IssuePrecertificate` | `IssueCertificateRequest` | `IssuePrecertificateResponse` | Issue a precertificate (poison-extension cert) |
-| `IssueCertificateForPrecertificate` | `IssueCertificateForPrecertificateRequest` | `core.Certificate` | Issue final certificate for an existing precertificate |
-
-**Message: `IssueCertificateRequest`**
-- `bytes csr = 1`
-- `int64 registrationID = 2`
-- `int64 orderID = 3`
-- `int64 issuerNameID = 4`
-- `string certProfileName = 5`
-
-**Message: `IssuePrecertificateResponse`**
-- `bytes DER = 1`
-- `bytes certProfileHash = 2`
-
-**Message: `IssueCertificateForPrecertificateRequest`**
-- `bytes DER = 1`
-- `repeated bytes SCTs = 2`
-- `int64 registrationID = 3`
-- `int64 orderID = 4`
-- `bytes certProfileHash = 5`
+| `IssuePrecertificate` | `IssueCertificateRequest { bytes csr, int64 registrationID, int64 orderID, int64 issuerNameID, string certProfileName }` | `IssuePrecertificateResponse { bytes DER, bytes certProfileHash }` | Issue a precertificate (TBS) |
+| `IssueCertificateForPrecertificate` | `IssueCertificateForPrecertificateRequest { bytes DER, repeated bytes SCTs, int64 registrationID, int64 orderID, bytes certProfileHash }` | `core.Certificate` | Issue a final certificate from a precertificate + SCTs |
 
 ---
 
@@ -59,17 +38,7 @@ Boulder is an ACME certificate authority implementation (Let's Encrypt CA). All 
 
 | RPC | Request | Response | Purpose |
 |-----|---------|----------|---------|
-| `GenerateOCSP` | `GenerateOCSPRequest` | `OCSPResponse` | Generate an OCSP response for a certificate |
-
-**Message: `GenerateOCSPRequest`**
-- `string status = 2`
-- `int32 reason = 3`
-- `google.protobuf.Timestamp revokedAt = 7`
-- `string serial = 5`
-- `int64 issuerID = 6`
-
-**Message: `OCSPResponse`**
-- `bytes response = 1`
+| `GenerateOCSP` | `GenerateOCSPRequest { string status, int32 reason, Timestamp revokedAt, string serial, int64 issuerID }` | `OCSPResponse { bytes response }` | Generate a signed OCSP response |
 
 ---
 
@@ -77,14 +46,7 @@ Boulder is an ACME certificate authority implementation (Let's Encrypt CA). All 
 
 | RPC | Request | Response | Purpose |
 |-----|---------|----------|---------|
-| `GenerateCRL` | `stream GenerateCRLRequest` | `stream GenerateCRLResponse` | Sign a CRL; bidirectional streaming |
-
-**Message: `GenerateCRLRequest`** (oneof `payload`)
-- `CRLMetadata metadata = 1` — `int64 issuerNameID`, `google.protobuf.Timestamp thisUpdate`, `int64 shardIdx`
-- `core.CRLEntry entry = 2`
-
-**Message: `GenerateCRLResponse`**
-- `bytes chunk = 1`
+| `GenerateCRL` | `stream GenerateCRLRequest` (oneof: `CRLMetadata { int64 issuerNameID, Timestamp thisUpdate, int64 shardIdx }` or `core.CRLEntry`) | `stream GenerateCRLResponse { bytes chunk }` | Generate a CRL via bidirectional streaming |
 
 ---
 
@@ -92,11 +54,7 @@ Boulder is an ACME certificate authority implementation (Let's Encrypt CA). All 
 
 | RPC | Request | Response | Purpose |
 |-----|---------|----------|---------|
-| `UploadCRL` | `stream UploadCRLRequest` | `google.protobuf.Empty` | Upload a signed CRL (client streaming) |
-
-**Message: `UploadCRLRequest`** (oneof `payload`)
-- `CRLMetadata metadata = 1` — `int64 issuerNameID`, `int64 number`, `int64 shardIdx`
-- `bytes crlChunk = 2`
+| `UploadCRL` | `stream UploadCRLRequest` (oneof: `CRLMetadata { int64 issuerNameID, int64 number, int64 shardIdx }` or `bytes crlChunk`) | `google.protobuf.Empty` | Upload a CRL to storage (e.g. S3) via client-streaming |
 
 ---
 
@@ -104,10 +62,7 @@ Boulder is an ACME certificate authority implementation (Let's Encrypt CA). All 
 
 | RPC | Request | Response | Purpose |
 |-----|---------|----------|---------|
-| `Chill` | `Time` | `Time` | Test interceptor: sleep for a given duration |
-
-**Message: `Time`**
-- `google.protobuf.Duration duration = 2`
+| `Chill` | `Time { google.protobuf.Duration duration }` | `Time { google.protobuf.Duration duration }` | Test interceptor: sleep for the given duration |
 
 ---
 
@@ -115,14 +70,8 @@ Boulder is an ACME certificate authority implementation (Let's Encrypt CA). All 
 
 | RPC | Request | Response | Purpose |
 |-----|---------|----------|---------|
-| `Nonce` | `google.protobuf.Empty` | `NonceMessage` | Generate a new ACME replay-nonce |
-| `Redeem` | `NonceMessage` | `ValidMessage` | Validate and redeem a nonce |
-
-**Message: `NonceMessage`**
-- `string nonce = 1`
-
-**Message: `ValidMessage`**
-- `bool valid = 1`
+| `Nonce` | `google.protobuf.Empty` | `NonceMessage { string nonce }` | Generate a fresh anti-replay nonce |
+| `Redeem` | `NonceMessage { string nonce }` | `ValidMessage { bool valid }` | Redeem (validate + consume) a nonce |
 
 ---
 
@@ -130,16 +79,9 @@ Boulder is an ACME certificate authority implementation (Let's Encrypt CA). All 
 
 | RPC | Request | Response | Purpose |
 |-----|---------|----------|---------|
-| `SubmitToSingleCTWithResult` | `Request` | `Result` | Submit precert/cert to a CT log and return SCT |
+| `SubmitToSingleCTWithResult` | `Request { bytes der, string LogURL, string LogPublicKey, SubmissionType kind }` | `Result { bytes sct }` | Submit a precertificate or certificate to a single CT log and return the SCT |
 
-**Message: `Request`**
-- `bytes der = 1`
-- `string LogURL = 2`
-- `string LogPublicKey = 3`
-- `SubmissionType kind = 5` — enum: `unknown(0)`, `sct(1)`, `info(2)`, `final(3)`
-
-**Message: `Result`**
-- `bytes sct = 1`
+`SubmissionType` enum values: `unknown(0)`, `sct(1)`, `info(2)`, `final(3)`
 
 ---
 
@@ -148,51 +90,16 @@ Boulder is an ACME certificate authority implementation (Let's Encrypt CA). All 
 | RPC | Request | Response | Purpose |
 |-----|---------|----------|---------|
 | `NewRegistration` | `core.Registration` | `core.Registration` | Create a new ACME account registration |
-| `UpdateRegistration` | `UpdateRegistrationRequest` | `core.Registration` | Update an existing registration |
-| `PerformValidation` | `PerformValidationRequest` | `core.Authorization` | Trigger domain validation |
+| `UpdateRegistration` | `UpdateRegistrationRequest { core.Registration base, core.Registration update }` | `core.Registration` | Update an existing registration |
+| `PerformValidation` | `PerformValidationRequest { core.Authorization authz, int64 challengeIndex }` | `core.Authorization` | Trigger challenge validation |
 | `DeactivateRegistration` | `core.Registration` | `google.protobuf.Empty` | Deactivate an account |
 | `DeactivateAuthorization` | `core.Authorization` | `google.protobuf.Empty` | Deactivate an authorization |
-| `RevokeCertByApplicant` | `RevokeCertByApplicantRequest` | `google.protobuf.Empty` | Applicant-initiated certificate revocation |
-| `RevokeCertByKey` | `RevokeCertByKeyRequest` | `google.protobuf.Empty` | Key-based certificate revocation |
-| `AdministrativelyRevokeCertificate` | `AdministrativelyRevokeCertificateRequest` | `google.protobuf.Empty` | Admin-initiated revocation |
-| `NewOrder` | `NewOrderRequest` | `core.Order` | Create a new certificate order |
-| `FinalizeOrder` | `FinalizeOrderRequest` | `core.Order` | Finalize order with a CSR |
-| `GenerateOCSP` | `GenerateOCSPRequest` (ra-scoped) | `ca.OCSPResponse` | Generate OCSP from current DB status |
-
-**Message: `UpdateRegistrationRequest`**
-- `core.Registration base = 1`
-- `core.Registration update = 2`
-
-**Message: `PerformValidationRequest`**
-- `core.Authorization authz = 1`
-- `int64 challengeIndex = 2`
-
-**Message: `RevokeCertByApplicantRequest`**
-- `bytes cert = 1`
-- `int64 code = 2`
-- `int64 regID = 3`
-
-**Message: `RevokeCertByKeyRequest`**
-- `bytes cert = 1`
-
-**Message: `AdministrativelyRevokeCertificateRequest`**
-- `bytes cert = 1` (deprecated; ignored)
-- `string serial = 4` (required)
-- `int64 code = 2`
-- `string adminName = 3`
-- `bool skipBlockKey = 5`
-- `bool malformed = 6`
-
-**Message: `NewOrderRequest`**
-- `int64 registrationID = 1`
-- `repeated string names = 2`
-- `string replacesSerial = 3`
-- `bool limitsExempt = 4`
-- `string certificateProfileName = 5`
-
-**Message: `FinalizeOrderRequest`** (ra-scoped)
-- `core.Order order = 1`
-- `bytes csr = 2`
+| `RevokeCertByApplicant` | `RevokeCertByApplicantRequest { bytes cert, int64 code, int64 regID }` | `google.protobuf.Empty` | Revoke a certificate by its owner |
+| `RevokeCertByKey` | `RevokeCertByKeyRequest { bytes cert }` | `google.protobuf.Empty` | Revoke a certificate by key compromise |
+| `AdministrativelyRevokeCertificate` | `AdministrativelyRevokeCertificateRequest { bytes cert, string serial, int64 code, string adminName, bool skipBlockKey, bool malformed }` | `google.protobuf.Empty` | Administrative revocation |
+| `NewOrder` | `NewOrderRequest { int64 registrationID, repeated string names, string replacesSerial, bool limitsExempt, string certificateProfileName }` | `core.Order` | Create a new certificate order |
+| `FinalizeOrder` | `FinalizeOrderRequest { core.Order order, bytes csr }` | `core.Order` | Finalize an order with a CSR |
+| `GenerateOCSP` | `GenerateOCSPRequest { string serial }` | `ca.OCSPResponse` | Generate OCSP response for a serial (RA-level) |
 
 ---
 
@@ -200,64 +107,64 @@ Boulder is an ACME certificate authority implementation (Let's Encrypt CA). All 
 
 | RPC | Request | Response | Purpose |
 |-----|---------|----------|---------|
-| `CountCertificatesByNames` | `CountCertificatesByNamesRequest` | `CountByNames` | Count certs issued per name set |
-| `CountFQDNSets` | `CountFQDNSetsRequest` | `Count` | Count FQDN sets issued |
+| `CountCertificatesByNames` | `CountCertificatesByNamesRequest` | `CountByNames` | Count certificates issued per name |
+| `CountFQDNSets` | `CountFQDNSetsRequest` | `Count` | Count FQDN sets |
 | `CountInvalidAuthorizations2` | `CountInvalidAuthorizationsRequest` | `Count` | Count invalid authorizations |
 | `CountOrders` | `CountOrdersRequest` | `Count` | Count orders |
-| `CountPendingAuthorizations2` | `RegistrationID` | `Count` | Count pending authzs for a registration |
-| `CountRegistrationsByIP` | `CountRegistrationsByIPRequest` | `Count` | Count registrations from an IP |
-| `CountRegistrationsByIPRange` | `CountRegistrationsByIPRequest` | `Count` | Count registrations from an IP range |
+| `CountPendingAuthorizations2` | `RegistrationID` | `Count` | Count pending authorizations for a registration |
+| `CountRegistrationsByIP` | `CountRegistrationsByIPRequest` | `Count` | Count registrations by exact IP |
+| `CountRegistrationsByIPRange` | `CountRegistrationsByIPRequest` | `Count` | Count registrations by IP range |
 | `FQDNSetExists` | `FQDNSetExistsRequest` | `Exists` | Check if an FQDN set exists |
-| `FQDNSetTimestampsForWindow` | `CountFQDNSetsRequest` | `Timestamps` | Get timestamps of FQDN set issuances |
+| `FQDNSetTimestampsForWindow` | `CountFQDNSetsRequest` | `Timestamps` | Get timestamps of FQDN sets within window |
 | `GetAuthorization2` | `AuthorizationID2` | `core.Authorization` | Fetch authorization by ID |
 | `GetAuthorizations2` | `GetAuthorizationsRequest` | `Authorizations` | Fetch multiple authorizations |
-| `GetCertificate` | `Serial` | `core.Certificate` | Fetch certificate by serial |
-| `GetLintPrecertificate` | `Serial` | `core.Certificate` | Fetch lint precertificate by serial |
-| `GetCertificateStatus` | `Serial` | `core.CertificateStatus` | Fetch certificate revocation/OCSP status |
-| `GetMaxExpiration` | `google.protobuf.Empty` | `google.protobuf.Timestamp` | Get the maximum certificate expiration |
-| `GetOrder` | `OrderRequest` | `core.Order` | Fetch order by ID |
-| `GetOrderForNames` | `GetOrderForNamesRequest` | `core.Order` | Fetch order matching a set of names |
+| `GetCertificate` | `Serial` | `core.Certificate` | Fetch a certificate by serial |
+| `GetLintPrecertificate` | `Serial` | `core.Certificate` | Fetch a lint precertificate by serial |
+| `GetCertificateStatus` | `Serial` | `core.CertificateStatus` | Fetch status of a certificate |
+| `GetMaxExpiration` | `google.protobuf.Empty` | `google.protobuf.Timestamp` | Get maximum certificate expiration in DB |
+| `GetOrder` | `OrderRequest` | `core.Order` | Fetch an order by ID |
+| `GetOrderForNames` | `GetOrderForNamesRequest` | `core.Order` | Fetch an order by name set |
 | `GetPendingAuthorization2` | `GetPendingAuthorizationRequest` | `core.Authorization` | Fetch a pending authorization |
 | `GetRegistration` | `RegistrationID` | `core.Registration` | Fetch registration by ID |
 | `GetRegistrationByKey` | `JSONWebKey` | `core.Registration` | Fetch registration by JWK |
-| `GetRevocationStatus` | `Serial` | `RevocationStatus` | Fetch revocation status of a serial |
-| `GetRevokedCerts` | `GetRevokedCertsRequest` | `stream core.CRLEntry` | Stream revoked cert entries |
-| `GetSerialMetadata` | `Serial` | `SerialMetadata` | Fetch metadata for a serial |
+| `GetRevocationStatus` | `Serial` | `RevocationStatus` | Get revocation status for a serial |
+| `GetRevokedCerts` | `GetRevokedCertsRequest` | `stream core.CRLEntry` | Stream revoked certificate entries |
+| `GetSerialMetadata` | `Serial` | `SerialMetadata` | Get metadata for a serial number |
 | `GetSerialsByAccount` | `RegistrationID` | `stream Serial` | Stream serials for an account |
-| `GetSerialsByKey` | `SPKIHash` | `stream Serial` | Stream serials for a key hash |
+| `GetSerialsByKey` | `SPKIHash` | `stream Serial` | Stream serials for a public key |
 | `GetValidAuthorizations2` | `GetValidAuthorizationsRequest` | `Authorizations` | Fetch valid authorizations |
 | `GetValidOrderAuthorizations2` | `GetValidOrderAuthorizationsRequest` | `Authorizations` | Fetch valid authorizations for an order |
-| `IncidentsForSerial` | `Serial` | `Incidents` | Fetch incident records for a serial |
-| `KeyBlocked` | `SPKIHash` | `Exists` | Check if a key is blocked |
-| `PreviousCertificateExists` | `PreviousCertificateExistsRequest` | `Exists` | Check if a prior cert exists for a name |
-| `ReplacementOrderExists` | `Serial` | `Exists` | Check if a replacement order exists for a serial |
-| `SerialsForIncident` | `SerialsForIncidentRequest` | `stream IncidentSerial` | Stream serials affected by an incident |
+| `IncidentsForSerial` | `Serial` | `Incidents` | List incidents affecting a serial |
+| `KeyBlocked` | `SPKIHash` | `Exists` | Check whether a key is blocked |
+| `PreviousCertificateExists` | `PreviousCertificateExistsRequest` | `Exists` | Check for a prior certificate |
+| `ReplacementOrderExists` | `Serial` | `Exists` | Check for a replacement order |
+| `SerialsForIncident` | `SerialsForIncidentRequest` | `stream IncidentSerial` | Stream serials associated with an incident |
 
 ---
 
 #### Service: `StorageAuthority` (`sa/proto/sa.proto`)
 
-Exposes all `StorageAuthorityReadOnly` RPCs (identical signatures) plus the following write operations:
+Exposes all `StorageAuthorityReadOnly` RPCs (identical signatures) plus the following write RPCs:
 
 | RPC | Request | Response | Purpose |
 |-----|---------|----------|---------|
-| `AddBlockedKey` | `AddBlockedKeyRequest` | `google.protobuf.Empty` | Block a key by SPKI hash |
-| `AddCertificate` | `AddCertificateRequest` | `google.protobuf.Empty` | Store a new certificate |
-| `AddPrecertificate` | `AddCertificateRequest` | `google.protobuf.Empty` | Store a new precertificate |
-| `SetCertificateStatusReady` | `Serial` | `google.protobuf.Empty` | Mark certificate status as ready |
-| `AddSerial` | `AddSerialRequest` | `google.protobuf.Empty` | Record a new serial number |
-| `DeactivateAuthorization2` | `AuthorizationID2` | `google.protobuf.Empty` | Deactivate an authorization |
-| `DeactivateRegistration` | `RegistrationID` | `google.protobuf.Empty` | Deactivate a registration |
+| `AddBlockedKey` | `AddBlockedKeyRequest` | `google.protobuf.Empty` | Add a key to the blocked-keys list |
+| `AddCertificate` | `AddCertificateRequest` | `google.protobuf.Empty` | Persist a final certificate |
+| `AddPrecertificate` | `AddCertificateRequest` | `google.protobuf.Empty` | Persist a precertificate |
+| `SetCertificateStatusReady` | `Serial` | `google.protobuf.Empty` | Mark a certificate's status as ready |
+| `AddSerial` | `AddSerialRequest` | `google.protobuf.Empty` | Record a serial number |
+| `DeactivateAuthorization2` | `AuthorizationID2` | `google.protobuf.Empty` | Deactivate an authorization in the SA |
+| `DeactivateRegistration` | `RegistrationID` | `google.protobuf.Empty` | Deactivate a registration in the SA |
 | `FinalizeAuthorization2` | `FinalizeAuthorizationRequest` | `google.protobuf.Empty` | Finalize an authorization |
-| `FinalizeOrder` | `FinalizeOrderRequest` | `google.protobuf.Empty` | Finalize an order record |
-| `NewOrderAndAuthzs` | `NewOrderAndAuthzsRequest` | `core.Order` | Atomically create order and authorizations |
-| `NewRegistration` | `core.Registration` | `core.Registration` | Create a new registration record |
-| `RevokeCertificate` | _Not determinable from code._ | `google.protobuf.Empty` | Revoke a certificate |
-| `SetOrderError` | _Not determinable from code._ | `google.protobuf.Empty` | Record an error on an order |
-| `SetOrderProcessing` | _Not determinable from code._ | `google.protobuf.Empty` | Mark order as processing |
-| `UpdateRevokedCertificate` | _Not determinable from code._ | `google.protobuf.Empty` | Update revocation fields |
-| `LeaseCRLShard` | _Not determinable from code._ | _Not determinable from code._ | Lease a CRL shard for generation |
-| `UpdateCRLShard` | _Not determinable from code._ | `google.protobuf.Empty` | Update CRL shard metadata |
+| `FinalizeOrder` | `FinalizeOrderRequest` | `google.protobuf.Empty` | Finalize an order in the SA |
+| `NewOrderAndAuthzs` | `NewOrderAndAuthzsRequest` | `core.Order` | Atomically create an order and its authorizations |
+| `NewRegistration` | `core.Registration` | `core.Registration` | Create a registration in the SA |
+| `RevokeCertificate` | _Not determinable from code (truncated proto)_ | `google.protobuf.Empty` | Revoke a certificate in the SA |
+| `SetOrderError` | _Not determinable from code (truncated proto)_ | `google.protobuf.Empty` | Record an error on an order |
+| `SetOrderProcessing` | _Not determinable from code (truncated proto)_ | `google.protobuf.Empty` | Mark an order as being processed |
+| `UpdateRevokedCertificate` | _Not determinable from code (truncated proto)_ | `google.protobuf.Empty` | Update revocation info for a certificate |
+| `LeaseCRLShard` | _Not determinable from code (truncated proto)_ | _Not determinable from code._ | Lease a CRL shard for generation |
+| `UpdateCRLShard` | _Not determinable from code (truncated proto)_ | `google.protobuf.Empty` | Update CRL shard metadata |
 
 ---
 
@@ -265,36 +172,17 @@ Exposes all `StorageAuthorityReadOnly` RPCs (identical signatures) plus the foll
 
 | RPC | Request | Response | Purpose |
 |-----|---------|----------|---------|
-| `PerformValidation` | `PerformValidationRequest` | `ValidationResult` | Perform ACME domain challenge validation |
-
-**Message: `PerformValidationRequest`**
-- `string domain = 1`
-- `core.Challenge challenge = 2`
-- `AuthzMeta authz = 3` — `string id`, `int64 regID`
-
-**Message: `ValidationResult`**
-- `repeated core.ValidationRecord records = 1`
-- `core.ProblemDetails problems = 2`
-
----
+| `PerformValidation` | `PerformValidationRequest { string domain, core.Challenge challenge, AuthzMeta authz }` | `ValidationResult { repeated core.ValidationRecord records, core.ProblemDetails problems }` | Perform ACME challenge validation (HTTP-01, DNS-01, TLS-ALPN-01) |
 
 #### Service: `CAA` (`va/proto/va.proto`)
 
 | RPC | Request | Response | Purpose |
 |-----|---------|----------|---------|
-| `IsCAAValid` | `IsCAAValidRequest` | `IsCAAValidResponse` | Check CAA DNS records for a domain |
-
-**Message: `IsCAAValidRequest`**
-- `string domain = 1` (may have wildcard prefix, e.g. `*.example.com`)
-- `string validationMethod = 2`
-- `int64 accountURIID = 3`
-
-**Message: `IsCAAValidResponse`**
-- `core.ProblemDetails problem = 1` (empty if valid)
+| `IsCAAValid` | `IsCAAValidRequest { string domain, string validationMethod, int64 accountURIID }` | `IsCAAValidResponse { core.ProblemDetails problem }` | Validate CAA DNS records for a domain |
 
 ---
 
-### Shared Core Message Types (`core/proto/core.proto`)
+### Core shared message types (`core/proto/core.proto`)
 
 | Message | Key Fields |
 |---------|-----------|
@@ -304,8 +192,8 @@ Exposes all `StorageAuthorityReadOnly` RPCs (identical signatures) plus the foll
 | `Authorization` | `string id`, `string identifier`, `int64 registrationID`, `string status`, `Timestamp expires`, `repeated Challenge challenges` |
 | `Order` | `int64 id`, `int64 registrationID`, `Timestamp expires`, `ProblemDetails error`, `string certificateSerial`, `string status`, `repeated string names`, `bool beganProcessing`, `Timestamp created`, `repeated int64 v2Authorizations`, `string certificateProfileName` |
 | `Challenge` | `int64 id`, `string type`, `string status`, `string token`, `string keyAuthorization`, `repeated ValidationRecord validationrecords`, `ProblemDetails error`, `Timestamp validated` |
-| `CRLEntry` | `string serial`, `int32 reason`, `Timestamp revokedAt` |
 | `ProblemDetails` | `string problemType`, `string detail`, `int32 httpStatus` |
+| `CRLEntry` | `string serial`, `int32 reason`, `Timestamp revokedAt` |
 
 ---
 
@@ -313,58 +201,59 @@ Exposes all `StorageAuthorityReadOnly` RPCs (identical signatures) plus the foll
 
 _Not determinable from code._
 
-No message broker, Kafka topics, RabbitMQ queues, or other async event bus integrations are evidenced in the extracted facts or source artifacts. All inter-service communication is synchronous gRPC.
+No message queue, Kafka topics, RabbitMQ exchanges, or other async event bus integrations are present in the extracted facts or source artifacts. All inter-service communication is synchronous gRPC.
 
 ---
 
 ## Input / Output Formats
 
-**Serialization:** Protocol Buffers (proto3) for all gRPC service interfaces. The `google.golang.org/protobuf` library (v1.33.0) is used for encoding/decoding.
+**Serialization:** Protocol Buffers (proto3) exclusively for all gRPC service interfaces. Wire format is the standard protobuf binary encoding over HTTP/2 (gRPC framing).
+
+**Timestamps:** All timestamps use `google.protobuf.Timestamp` (nanosecond precision UTC). Legacy nanosecond integer fields have been reserved/removed in favor of this type.
 
 **Streaming patterns:**
-- Server streaming: `GetRevokedCerts` returns `stream core.CRLEntry`; `GetSerialsByAccount` and `GetSerialsByKey` return `stream Serial`; `SerialsForIncident` returns `stream IncidentSerial`.
-- Client streaming: `UploadCRL` accepts `stream UploadCRLRequest`.
-- Bidirectional streaming: `GenerateCRL` accepts `stream GenerateCRLRequest` and returns `stream GenerateCRLResponse`.
+- **Server-streaming:** `GetRevokedCerts` → `stream core.CRLEntry`; `GetSerialsByAccount` → `stream Serial`; `GetSerialsByKey` → `stream Serial`; `SerialsForIncident` → `stream IncidentSerial`; `GenerateCRL` response side.
+- **Client-streaming:** `UploadCRL` request side.
+- **Bidirectional streaming:** `GenerateCRL` (client streams `GenerateCRLRequest` containing either `CRLMetadata` or `CRLEntry` entries; server streams back `GenerateCRLResponse` chunks).
 
-**Timestamps:** All time fields use `google.protobuf.Timestamp` (previously stored as nanosecond integers; several fields have been migrated and old `NS`-suffixed fields are reserved).
+**Binary fields:** DER-encoded certificates and CSRs are transmitted as `bytes`. Public key hashes (`SPKIHash`) are `binary(32)`. SCTs are raw `bytes`.
 
-**Byte fields:** DER-encoded certificates, CSRs, SCTs, OCSP responses, and JWK keys are transmitted as raw `bytes` fields.
+**Pagination:** _Not determinable from code._ Streaming RPCs are used in place of pagination for large result sets (e.g., `GetSerialsByAccount`, `GetRevokedCerts`).
 
-**External HTTP (ACMEv2):** Port 4001 (ACMEv2), port 4002/4003 (OCSP) are exposed per `docker-compose.yml`. The WFE2 (`wfe2/`) component handles ACMEv2 HTTP requests, but the HTTP route/OpenAPI contract details are not included in the provided snapshot. Content-type for ACMEv2 is conventionally `application/jose+json` for request bodies and `application/json` for responses per RFC 8555, but this is not directly evidenced in the snapshot.
+**Content-type negotiation:** Standard gRPC content type (`application/grpc+proto`). No REST content-type negotiation is present in the internal API layer.
 
-**JWK/JOSE:** `gopkg.in/go-jose/go-jose.v2` is used for JSON Web Key and JWS handling (ACME account keys and request signing).
-
-**Pagination:** _Not determinable from code._ Streaming RPCs (e.g. `GetSerialsByAccount`) implicitly paginate via gRPC stream consumption rather than offset/cursor pagination.
+**Observability:** OpenTelemetry tracing (`otelgrpc`) and Prometheus metrics (`go-grpc-prometheus`) are applied as gRPC interceptors, injecting trace context and metrics instrumentation into all gRPC calls.
 
 ---
 
 ## Error Handling
 
-**gRPC status codes:** Error propagation follows standard gRPC conventions using `google.golang.org/grpc/status`. Specific code-to-error mappings are not fully enumerable from the proto files alone.
+**gRPC status codes:** Boulder uses standard gRPC status codes propagated through the `google.golang.org/grpc/status` and `google.golang.org/genproto/googleapis/rpc` packages. Specific code-to-status mappings beyond what is implied by the proto definitions are _Not determinable from code_ from the available snapshot.
 
-**`ProblemDetails` message:** Used throughout for structured error information within response payloads (not as a transport-level error):
-- `string problemType` — ACME problem type URI (e.g. `urn:ietf:params:acme:error:*`)
-- `string detail` — human-readable description
-- `int32 httpStatus` — HTTP status code equivalent (relevant for ACMEv2 surface)
+**`ProblemDetails` message:** Application-level errors (ACME problem documents) are carried in-band as `core.ProblemDetails { string problemType, string detail, int32 httpStatus }`. This message is embedded in:
+- `core.Challenge.error`
+- `core.Order.error`
+- `va.IsCAAValidResponse.problem` — an empty `problem` field signals CAA is valid.
+- `va.ValidationResult.problems`
 
-**Order errors:** `core.Order` contains an embedded `ProblemDetails error` field to communicate order-level failures without requiring a gRPC error status.
+**Validation failure signaling:** For CAA validation (`IsCAAValid`), a populated `ProblemDetails` in the response indicates failure; an empty/absent problem indicates success. For challenge validation (`PerformValidation`), failure is indicated by a populated `problems` field in `ValidationResult`.
 
-**CAA validation:** `IsCAAValidResponse` carries a `core.ProblemDetails problem` field; an empty problem indicates success.
+**Administrative revocation:** The `malformed` flag in `AdministrativelyRevokeCertificateRequest` prevents certificate parsing; when set, `keyCompromise` reason code cannot be used (key blocking is not possible without parsing).
 
-**Validation results:** `ValidationResult` carries a `core.ProblemDetails problems` field for challenge validation failures.
+**Redis usage:** Redis (`go-redis/v9`) is used for OCSP response caching and rate-limit storage; error handling for cache misses is _Not determinable from code_ from the available artifacts.
 
-**Revocation reason codes:** `int32 reason` / `int64 code` fields in revocation messages map to RFC 5280 CRL reason codes; specific enumeration is not defined in the proto files (bare integers).
-
-**Key blocking:** `AdministrativelyRevokeCertificateRequest.malformed = true` prevents key blocking when the certificate cannot be parsed; using `keyCompromise` reason is disallowed in that case (enforced at the RA layer).
+**Database errors:** MySQL accessed via `go-sql-driver/mysql` through the `borp` ORM. Versions >1.5.0 are explicitly excluded in `go.mod` due to documented performance regressions.
 
 ---
 
 ## Versioning
 
-**Proto package namespacing:** Each service has its own Go package path (e.g. `github.com/letsencrypt/boulder/ca/proto`, `github.com/letsencrypt/boulder/sa/proto`). There is no URI-level or header-based versioning; versioning is managed through field reservation (`reserved` field numbers) and additive field additions per proto3 evolution rules.
+**Proto field reservation:** Boulder uses proto3 field reservation (`reserved`) extensively to tombstone deprecated fields (e.g., legacy nanosecond timestamp fields replaced by `google.protobuf.Timestamp`). This is the primary schema evolution mechanism — old field numbers are never reused.
 
-**Field reservation:** Numerous fields are marked `reserved` with comments indicating previously used field names (e.g., nanosecond timestamp variants replaced by `google.protobuf.Timestamp` equivalents). This pattern provides backward-compatible schema evolution without breaking existing serialized data.
+**No URI versioning:** There are no HTTP URI version prefixes in the internal gRPC API surface.
 
-**Service split versioning:** The `StorageAuthority` / `StorageAuthorityReadOnly` split and the `OCSPGenerator` / `CertificateAuthority` / `CRLGenerator` split represent operational versioning — access control boundaries are enforced by deploying separate gRPC server instances with different client allowlists rather than API version strings.
+**SA read/write split versioning:** The `StorageAuthorityReadOnly` service is a strict subset of `StorageAuthority` (identical read RPC signatures), enabling separate deployment and access-control tiers without API version divergence.
 
-**ACMEv2:** The service targets ACMEv2 (RFC 8555) exclusively; ACMEv1 fields are reserved in several proto messages (e.g., `reserved 7 // previously ACMEv1 combinations` in `Authorization`). No URI versioning suffix is present in the gRPC service definitions.
+**Go module version:** `github.com/letsencrypt/boulder` at Go 1.21, with `google.golang.org/protobuf v1.33.0` and `google.golang.org/grpc v1.60.1`.
+
+**No explicit API version header or URI versioning strategy** is present; schema evolution is managed through proto field reservation and additive changes only.
