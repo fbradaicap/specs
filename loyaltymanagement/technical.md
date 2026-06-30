@@ -2,10 +2,10 @@
 repo: loyaltymanagement
 spec_type: technical
 commit: a0321cd4386bc946a394b585316e19a23f985828
-model: claude-sonnet-4-6
+model: anthropic:claude-sonnet-4-6
 prompt_version: v1
-input_hash: 469b02de1c019b90b692b2f0f3c1092f8f3229e17169b313f078fb1f6acdcbef
-generated_at: 2026-06-30T15:59:26.665857914+02:00
+input_hash: 223517456ad62115d22dfd391894f67014ce1b9e9a6d6184885c09a215615c83
+generated_at: 2026-06-30T17:38:11.525463360+02:00
 generator: specsync
 ---
 
@@ -16,74 +16,66 @@ generator: specsync
 | Language | Java 21 |
 | Runtime | JVM (Java 21) |
 | Framework | Spring Boot 4.0.6 (via `spring-boot-starter-parent`) |
-| Web layer | Spring MVC (`spring-boot-starter-webmvc`) |
+| Web Layer | Spring MVC (`spring-boot-starter-webmvc`) |
 | Persistence | Spring Data JPA (`spring-boot-starter-data-jpa`) |
-| Database (runtime) | H2 in-memory database (`com.h2database:h2`, runtime scope) |
-| API documentation | springdoc-openapi 3.0.2 (`springdoc-openapi-starter-webmvc-ui`) — exposes Swagger UI |
-| Code generation | Lombok (compile-time annotation processor; excluded from final artifact) |
-| Build tool | Apache Maven (via Maven Wrapper, `.mvn/`) |
-| Test framework | Spring Boot Test slices for JPA and MVC (test scope) |
+| Database | H2 in-memory database (runtime scope) |
+| API Documentation | SpringDoc OpenAPI UI 3.0.2 (`springdoc-openapi-starter-webmvc-ui`) |
+| Code Generation | Lombok (annotation processor, excluded from final artifact) |
+| Build Tool | Apache Maven (with `spring-boot-maven-plugin` and `maven-compiler-plugin`) |
+| Test Libraries | `spring-boot-starter-data-jpa-test`, `spring-boot-starter-webmvc-test` |
 
 ## Architecture Patterns
 
-The service follows a **classic layered (n-tier) REST API** pattern typical of Spring Boot applications:
+The service follows a **layered REST API** architectural style typical of Spring Boot applications:
 
-- **Presentation layer** — Spring MVC controllers intended to expose HTTP REST endpoints (no controller source files are present at this commit, indicating the service is in early/scaffold stage).
-- **Persistence layer** — Spring Data JPA repositories backed by an H2 in-memory datastore.
-- **API documentation** — Swagger UI auto-generated via springdoc-openapi, reachable at the standard `/swagger-ui.html` or `/swagger-ui/index.html` path.
-- **H2 console** — The `spring-boot-h2console` dependency enables the browser-based H2 console for development-time inspection.
+- **Spring MVC (REST API):** The inclusion of `spring-boot-starter-webmvc` and SpringDoc OpenAPI indicates the service is intended to expose HTTP REST endpoints, with auto-generated OpenAPI/Swagger documentation.
+- **Repository pattern:** `spring-boot-starter-data-jpa` implies the use of Spring Data JPA repositories for data access abstraction.
+- **Embedded database pattern:** H2 is configured as a runtime dependency with the H2 console enabled (`spring-boot-h2console`), suggesting an in-memory, self-contained data store suitable for development or hackathon/demo use.
 
-No CQRS, event-driven, or hexagonal patterns are evident at this stage. The application is a single deployable unit (monolith-in-a-jar) with no async messaging.
+Beyond the entry point (`LoyaltyManagementApplication.java`) and a smoke test (`contextLoads`), no additional controllers, services, repositories, or entities are present in the provided source snapshot. The service appears to be at an **early scaffold/skeleton stage** with no business logic implemented yet.
 
 ## Database & Data Ownership
 
-| Item | Detail |
+| Aspect | Detail |
 |---|---|
-| Datastore type | H2 in-memory relational database (runtime dependency) |
-| Persistence mechanism | Spring Data JPA / Hibernate (auto-DDL expected) |
-| Owned tables / models | _Not determinable from code._ — No entity classes or migration scripts are present at head commit |
-| Ownership boundary | This service is the sole owner of its embedded H2 instance; no shared datastore is configured |
-
-> **Note:** Because H2 is in-memory and no external datasource URL is defined in `application.properties`, all data is ephemeral and lost on restart. A persistent RDBMS datasource has not yet been configured.
+| Datastore type | H2 in-memory relational database (embedded) |
+| Schema/tables | _Not determinable from code._ No migrations, entities, or JPA models are present in the provided snapshot. |
+| Ownership boundary | Intended to own loyalty-domain data (implied by service name and JPA dependency), but no concrete schema is defined yet. |
+| H2 Console | Enabled via `spring-boot-h2console` dependency; accessible at `/h2-console` by default. |
 
 ## Dependencies
 
-### Runtime dependencies
+### Runtime Dependencies
 
-| Dependency | Purpose |
-|---|---|
-| `spring-boot-starter-webmvc` | Embedded Tomcat + Spring MVC for HTTP request handling |
-| `spring-boot-starter-data-jpa` | JPA/Hibernate ORM + Spring Data repository abstraction |
-| `spring-boot-h2console` | Browser-based H2 administration console |
-| `com.h2database:h2` | H2 in-memory RDBMS |
-| `springdoc-openapi-starter-webmvc-ui:3.0.2` | OpenAPI 3 spec generation and Swagger UI |
+| Dependency | Type | Purpose |
+|---|---|---|
+| `spring-boot-starter-webmvc` | Runtime | HTTP/REST API layer via Spring MVC |
+| `spring-boot-starter-data-jpa` | Runtime | JPA-based data persistence (Hibernate) |
+| `spring-boot-h2console` | Runtime | H2 database web console |
+| `h2` | Runtime | Embedded in-memory relational database |
+| `springdoc-openapi-starter-webmvc-ui` v3.0.2 | Runtime | OpenAPI 3 documentation and Swagger UI |
+| `lombok` | Compile-time (annotation processor only, excluded from artifact) | Boilerplate reduction (getters, setters, builders, etc.) |
 
-### Build / compile-time dependencies
+### Test Dependencies
 
-| Dependency | Purpose |
-|---|---|
-| `org.projectlombok:lombok` | Boilerplate code generation (getters, builders, etc.) — excluded from packaged JAR |
+| Dependency | Scope | Purpose |
+|---|---|---|
+| `spring-boot-starter-data-jpa-test` | Test | JPA slice testing support |
+| `spring-boot-starter-webmvc-test` | Test | Spring MVC slice testing (`MockMvc`) |
 
-### Test dependencies
-
-| Dependency | Purpose |
-|---|---|
-| `spring-boot-starter-data-jpa-test` | JPA slice testing (`@DataJpaTest`) |
-| `spring-boot-starter-webmvc-test` | MVC slice testing (`@WebMvcTest`) |
-
-### External service / broker / third-party API dependencies
-
-_Not determinable from code._ — No outbound HTTP clients, message broker configuration, or third-party API integrations are present at head commit.
+### External Service / Broker / Cache Dependencies
+_Not determinable from code._ No outbound HTTP clients, message brokers, caches, or third-party API integrations are present in the provided snapshot.
 
 ## Deployment Model
 
 | Aspect | Detail |
 |---|---|
-| Build artifact | Executable fat JAR produced by `spring-boot-maven-plugin` |
-| Containerisation | _Not determinable from code._ — No `Dockerfile` or container image definition is present |
-| Orchestration | _Not determinable from code._ — No Kubernetes manifests, Helm charts, or Docker Compose files are present |
-| Exposed port | Spring Boot default `8080` (no override in `application.properties`) |
-| H2 console path | `/h2-console` (default, enabled by `spring-boot-h2console`) |
-| Swagger UI path | `/swagger-ui/index.html` (springdoc-openapi default) |
-| Health / readiness endpoints | _Not determinable from code._ — Spring Boot Actuator is not listed as a dependency; no explicit health endpoint is configured |
-| Environment configuration | Only `spring.application.name=loyalty-management` is set; all other configuration relies on Spring Boot defaults |
+| Container image (Dockerfile) | _Not determinable from code._ No `Dockerfile` is present in the snapshot. |
+| Orchestration | _Not determinable from code._ No Kubernetes manifests, Helm charts, or Docker Compose files are present. |
+| Build artifact | Executable JAR produced by `spring-boot-maven-plugin` (`mvn package`) |
+| Default port | Spring Boot default `8080` (no override specified in `application.properties`) |
+| Context path | Default `/` (not configured) |
+| Health/readiness endpoints | _Not determinable from code._ Spring Boot Actuator is not declared as a dependency; no custom health endpoints are visible. |
+| Environment configuration | Minimal — only `spring.application.name=loyalty-management` is set. All other configuration (datasource URL, credentials, etc.) falls back to Spring Boot auto-configuration defaults for H2. |
+| OpenAPI UI | Available at `/swagger-ui.html` (SpringDoc default) |
+| H2 Console | Available at `/h2-console` (Spring Boot default) |
