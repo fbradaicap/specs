@@ -5,67 +5,68 @@ commit: e14824c51e129edb28dd2ccc91ee73e5475323e9
 model: claude-sonnet-4-6
 prompt_version: v1
 input_hash: ec2cfbed4740073039b63156e26fcd0c108f38c3096973c381734f6e64550069
-generated_at: 2026-06-30T14:57:16.978197709+02:00
+generated_at: 2026-06-30T14:58:31.107203435+02:00
 generator: specsync
 ---
 
 ## Business Purpose
 
-`fastly-log-analytics` is a self-hosted analytics platform for Fastly CDN customers. It ingests raw Fastly access logs from object storage (FOS/S3-compatible), stores and compacts them locally using DuckDB and Apache Iceberg, and exposes a Next.js dashboard with charts, maps, SQL querying, and bot-detection insights. The service exists so operators can analyse CDN traffic patterns, monitor origin performance, detect anomalies, and reconcile log accounting against Fastly's own stats API — without routing data through a third-party SaaS.
+`fastly-log-analytics` is a self-hosted analytics platform that ingests, stores, and queries Fastly CDN access logs for a single operator/organisation. It provides a full-stack dashboard (Next.js frontend + Python/FastAPI backend) over locally-cached Parquet/Iceberg data, enabling operators to analyse traffic, performance, bot activity, geographic distribution, and origin health without sending raw log data to a third-party analytics service. An optional Rust/Wasm edge component (`session-scorer`) runs on Fastly Compute to classify and score sessions at the CDN edge before logs are written.
 
 ## Domain Scope (DDD Bounded Context)
 
-- **Bounded context:** CDN Log Analytics & Session Intelligence — covering ingestion, storage, querying, and visualisation of Fastly CDN access-log data.
+- **Bounded context:** CDN Log Analytics — the ownership boundary covers everything from raw Fastly log ingestion through local query, rollup, and presentation layers.
 - **Core domain entities / aggregates:**
-  - **Service** — a Fastly CDN service configuration (service_id, bucket, prefix, CDN URL/secret, access level, metadata-retention policy).
-  - **Log File / Ingest Record** — raw `.gz` Fastly log objects in object storage, tracked by ingestion state (in-flight, ingested, orphaned).
-  - **Iceberg Table / Snapshot** — the primary analytical store; versioned table of parsed log events partitioned by date.
-  - **Local Parquet Cache** — compacted local DuckDB-backed cache of Iceberg data for fast dashboard queries.
-  - **Rollup Bundle** — pre-aggregated per-hour and per-day summaries (slow URLs, origin summary, network RTT/speed, verified bots, perf latency).
-  - **Session** — a reconstructed visitor session; scored by the edge Wasm scorer for anomaly/bot signals.
-  - **Bot Source** — a named external feed of known-bot IP ranges / rDNS patterns.
-  - **PoP Location** — Fastly Point of Presence geo-coordinate record.
+  - **Service** — a Fastly CDN service configuration (identified by `service_id` / `name`), the root aggregate for all data scoped below.
+  - **Log file** — raw compressed log objects stored in Fastly Object Storage (FOS/S3-compatible).
+  - **Iceberg table / local Parquet cache** — the queryable materialisation of ingested logs.
+  - **Rollup bundles** — pre-aggregated hourly/daily summaries (slow URLs, origin summary, network RTT/speed, verified bots, perf latency).
+  - **Session** — an edge-classified visitor session (scored and identified by the Wasm edge component).
+  - **Bot source** — a catalogued source of bot IP ranges with rDNS metadata.
+  - **Cron run** — a tracked execution of a scheduled or manual background task (ingest, commit, metadata sync, compaction).
+  - **POP location** — Fastly point-of-presence geographic metadata.
 - **Relationships to neighbouring contexts:**
-  - **Upstream — Fastly CDN platform:** log files are produced by Fastly logging endpoints into object storage; Fastly Stats API is called to validate local counts; Fastly Compute API is used to deploy/manage the edge session-scorer Wasm.
-  - **Upstream — Object storage (FOS/S3-compatible):** raw log source and Iceberg table backing store.
-  - **Downstream — Browser dashboard (Next.js frontend):** consumes the backend REST API for all analytics, admin, and download operations.
-  - **Downstream — Fastly Compute@Edge:** the compiled `session-scorer` Wasm is published to the customer's Compute service to score sessions at the edge.
+  - **Upstream:** Fastly CDN platform (provides raw logs via FOS object storage, stats API, VCL/Compute runtime, and POP location data).
+  - **Upstream:** Fastly Stats API (authoritative request counts used for log-accounting/loss detection).
+  - **Downstream:** The edge `session-scorer` Wasm binary is published to the customer's Fastly Compute service via the Fastly API; it feeds session classification data back into the log stream.
 
 ## Use Cases / User Stories
 
-- **As an operator, I want to trigger manual log ingestion for a time window** so that I can fill gaps caused by missed cron runs. → `POST /admin/ingest-logs?start_time=…&end_time=…`
-- **As an operator, I want to view a log accounting comparison** (local ingest counts vs Fastly Stats API) so that I can detect classifier drift or mid-flight backfill anomalies. → `GET /admin/log-accounting`
-- **As an operator, I want to force-backfill a specific time window from FOS** so that I can repair gaps in the local cache. → `POST /admin/backfill-window`
-- **As an operator, I want to trigger compaction / optimization of the Iceberg table** so that I can reduce file count and keep query performance healthy. → `POST /admin/optimize-now`, `POST /admin/local-compact-now`
-- **As an operator, I want to view compaction statistics** so that I can monitor whether the local compaction cron is keeping up. → `GET /admin/compaction-stats`
-- **As an operator, I want to backfill missing rollup bundles** (slow URLs, origin summary, network RTT/speed, verified bots, perf latency) for historical hours so that the dashboard panels have complete data. → `POST /admin/backfill-bundle-rollups`
-- **As an operator, I want to view Iceberg table metadata and a per-date snapshot calendar** so that I can verify data completeness. → `GET /admin/iceberg-info`, `GET /admin/iceberg-calendar`
-- **As an operator, I want to manually flush the local buffer to the Iceberg table** so that uncommitted data is persisted immediately. → `POST /admin/commit-iceberg`
-- **As an operator, I want to rebuild the local DuckDB view** so that I can recover from a stale or desynchronised analytics view. → `POST /admin/rebuild-local-view`
-- **As an operator, I want to download individual log files or entire folders as ZIP archives** so that I can retain or process raw data externally. → `GET /download`, `GET /download-folder`, `GET /download-all`
-- **As an operator, I want to see a system health snapshot** (CPU, memory, disk, pool wait, scheduler liveness, cron errors, config-backup freshness) so that I can diagnose operational issues. → `GET /admin/health-snapshot`
-- **As an operator, I want to update metadata-retention policy** so that I can control how long usage logs and ingested file records are kept. → `PATCH /admin/metadata-retention`
-- **As an operator, I want to trigger a metadata cleanup** so that I can reclaim disk space by purging expired records. → `POST /admin/metadata-cleanup`
-- **As an operator, I want to inspect and refresh bot-source feeds** so that bot classification uses up-to-date IP/rDNS lists. → `GET /admin/bot-sources`, `POST /admin/bot-sources/{source_id}/refresh`
-- **As an operator, I want to view and refresh PoP location data** so that the geographic traffic map is accurate. → `GET /admin/pop-locations`, `POST /admin/pop-locations/refresh`
-- **As an operator, I want to view metric history in batch** so that I can plot historical performance trends. → `GET /admin/metric-history/batch`
-- **As an operator, I want to view metadata storage statistics** so that I can understand per-service storage consumption. → `GET /admin/metadata-storage`
-- **As a dashboard user, I want to query CDN log data using SQL** so that I can perform ad-hoc analysis beyond pre-built panels.
-- **As a developer, I want to train and deploy a session-anomaly scoring Wasm to Fastly Compute** so that bot and anomaly signals are evaluated at the edge before logs reach the backend. → `scripts/scoring/train.py`, `scripts/scoring/deploy_wasm.sh`
+- **As an operator, I want to manually trigger log ingestion for a time window** so that I can fill gaps or force a refresh without waiting for the cron. → `POST /admin/ingest-logs`
+- **As an operator, I want to view a health snapshot of the running system** so that I can detect resource exhaustion, stalled crons, or failed scheduler tasks. → `GET /admin/health-snapshot`
+- **As an operator, I want to compare locally ingested log counts against Fastly Stats API counts** so that I can detect and diagnose sustained log loss. → `GET /admin/log-accounting`
+- **As an operator, I want to force-sync a specific historical time window** so that I can heal gaps identified by the log-accounting view. → `POST /admin/backfill-window`
+- **As an operator, I want to trigger Iceberg table compaction** so that I can reclaim storage and improve query performance outside of the nightly cron schedule. → `POST /admin/optimize-now`, `POST /admin/local-compact-now`
+- **As an operator, I want to rebuild rollup bundles for historical hours** so that I can repair missing aggregations without a full re-ingest. → `POST /admin/backfill-bundle-rollups`
+- **As an operator, I want to rebuild the local DuckDB view** so that I can recover from a desynchronised or stale query layer. → `POST /admin/rebuild-local-view`
+- **As an operator, I want to manually flush the local write buffer to the Iceberg table** so that I can ensure recent data is durably committed. → `POST /admin/commit-iceberg`
+- **As an operator, I want to view and refresh bot source lists** so that bot traffic is correctly classified in analytics. → `GET /admin/bot-sources`, `POST /admin/bot-sources/{source_id}/refresh`
+- **As an operator, I want to view Iceberg table metadata and a per-date data file calendar** so that I can verify data coverage and table health. → `GET /admin/iceberg-info`, `GET /admin/iceberg-calendar`
+- **As an operator, I want to download individual log files or batches as ZIP archives** so that I can perform offline analysis or archival. → `GET /download`, `GET /download-folder`, `GET /download-all`
+- **As an operator, I want to view and update metadata retention configuration** so that I can control storage costs. → `PATCH /admin/metadata-retention`, `GET /admin/metadata-storage`, `POST /admin/metadata-cleanup`
+- **As an operator, I want to view batch metric history** so that I can track system performance over time. → `GET /admin/metric-history/batch`
+- **As an operator, I want to view compaction statistics** so that I can monitor whether the compaction cron is keeping up with write volume. → `GET /admin/compaction-stats`
+- **As an operator, I want to view and refresh POP location data** so that geographic analytics are accurate. → `GET /admin/pop-locations`, `POST /admin/pop-locations/refresh`
+- **As an operator, I want to trigger an ad-hoc log-accounting backfill for a specific window** so that I can resolve counted gaps retroactively. → `POST /admin/backfill-window`
+- **As an operator, I want to trigger or schedule edge session scoring** so that bot/anomaly detection runs at the CDN edge with minimal latency. → Edge `session-scorer` Wasm deployed via `scripts/scoring/deploy_wasm.sh`
+- **As a developer, I want to run synthetic load tests and perf gates** so that performance regressions are caught before deployment. → `scripts/perf_gate.sh`, `scripts/emit_perf_latest.py`
 
 ## Business Rules
 
-- **Access-level enforcement:** Services configured with `access_level == "read_only"` only trigger a metadata sync (not a full ingest cron) when `POST /admin/ingest-logs` is called; full ingest is blocked for read-only sources. (inferred)
-- **Cross-tenant key isolation:** A log file download key must begin with the configured per-service `prefix`; requests for keys outside that prefix are rejected with HTTP 400 `invalid_key`. This prevents one service's configuration from accessing another tenant's FOS objects.
-- **Path-traversal prevention:** Local cache file downloads are bounds-checked against the service cache directory using real-path resolution; absolute paths and `../` traversal payloads are rejected with HTTP 400 `invalid_key`.
-- **CDN secret confidentiality:** When proxying CDN downloads, the CDN secret is transmitted as an HTTP request header (`x-fastly-key`) server-side, never embedded in redirect URLs, to prevent leaking the bearer token into browser history, Referer headers, or HTTP intermediaries.
-- **Compaction cron coalescing:** Only one compaction/commit/metadata-sync run per service may be active at a time; a second trigger returns the existing `run_id` (resume) or HTTP 503 `cron_busy` (rebuild endpoint), preventing concurrent DuckDB exclusive-lock conflicts.
-- **DuckDB exclusive-lock requirement:** Backfill and rollup endpoints must be called via the running backend process; an external process cannot access the `.duckdb` file because DuckDB holds an exclusive lock.
-- **Metadata-retention coercion:** Retention values in `PATCH /admin/metadata-retention` are coerced to `int`; negative values are not accepted. (inferred)
-- **Iceberg optimize minimum-files threshold:** `POST /admin/optimize-now` accepts an optional `min_files` override; without it an auto-derived threshold is used. The `POST /admin/local-compact-now` endpoint defaults to `min_files=3` (normal cron behaviour) and accepts `0` to force-rewrite every partition.
-- **Config-backup freshness monitoring:** The admin health card reads a freshness marker written by `scripts/backup_service_configs.sh`; a missing or stale marker is surfaced as a health signal (SRE-11).
-- **Log-accounting loss alerting:** There is a named threshold `LOG_ACCOUNTING_LOSS_THRESHOLD` and a minimum run count `LOG_ACCOUNTING_MIN_RUN` used by both the UI callout and the gap-heal cron to trigger `SustainedLossAlert` when local ingest counts fall below expected Fastly Stats API values.
-- **Falco VCL validation enforcement:** When `SCORING_REQUIRE_FALCO=1` is set on the backend, the VCL validator hard-fails if the `falco` binary is absent, preventing deployment of an unvalidated URL-exclusion regex to the scoring service.
-- **Remote vs. local trust boundary:** Requests arriving from loopback (127.0.0.1) are classified as local admin; requests from non-loopback addresses are classified as remote and subject to additional access restrictions (`backend/utils/remote_access.py`).
-- **OTel console exporter prohibited in deployed environments:** CI enforces via `check_no_console_otel.sh` that `OTEL_EXPORTER=console` is never set in deployed configuration (ADR-08).
-- **Security regression floor:** The number of security-regression tests may not decrease; enforced by `check_security_regression_count.sh` as a pre-push and CI gate.
+- **Local admin trust model:** Requests arriving on loopback (`127.0.0.1`) are treated as local/admin; requests from non-loopback addresses are classified as remote and may be rejected (400). The Caddy/frontend containers deliberately share the backend's network namespace to satisfy this rule. (inferred from `backend/utils/remote_access.py` references and `docker-compose.yml` comments)
+- **Cross-tenant key isolation:** File download and presigned URL minting require that the requested object key begins with the service's configured `prefix`. Requests for keys outside the prefix are rejected with HTTP 400 `invalid_key`.
+- **Path traversal prevention:** Local cache file serving resolves the candidate path and requires it to be within the cache directory; absolute paths or `../` traversals are rejected with HTTP 400 `invalid_key`.
+- **CDN secret confidentiality:** The `cdn_secret` bearer token is never embedded in redirect URLs; the backend fetches CDN objects server-side using an `x-fastly-key` header so the secret never leaves the service trust boundary.
+- **Read-only service access level:** If a service is configured with `access_level = read_only`, manual ingest triggers a `metadata_sync` rather than a full `_run_service_cron` write path.
+- **Cron concurrency guard:** Only one instance of a given cron task (e.g. `commit`, `metadata_sync`) may run per service at a time; a second request returns HTTP 503 `cron_busy` (for `rebuild-local-view`) or resumes/reports the existing run_id (for other endpoints).
+- **Negative metadata retention values are rejected:** Values passed to `PATCH /admin/metadata-retention` are coerced to int; negative values are explicitly disallowed. (inferred from code comment "negative …")
+- **Iceberg optimize minimum file threshold:** The compaction endpoint accepts an optional `min_files` override; passing `1` enables maximum-aggressive cleanup, `0` force-rewrites every partition. Default cron behaviour uses `min_files = 3`.
+- **`local-compact-now` is FOS-safe:** Local compaction only rewrites files in the local cache and never touches Fastly Object Storage, avoiding object-storage minimum-storage-duration billing penalties.
+- **Wasm scorer cold-start size constraint:** The `session-scorer` Cargo profile uses `opt-level = "s"`, LTO, single codegen unit, symbol stripping, and `panic = abort` to minimise `.wasm` binary size for fast per-request instantiation on Fastly Compute.
+- **Falco VCL validator is required in production:** If `SCORING_REQUIRE_FALCO=1` is set, absence of the `falco` binary causes a hard failure when publishing a custom URL-exclusion regex. (inferred from Dockerfile comment)
+- **Directory size cache TTL is 30 seconds:** Stale-while-revalidate with background refresh; concurrent cold misses are coalesced to a single walk per path.
+- **Log-accounting Fastly Stats cache TTL is 45 seconds:** The dominant latency item (Fastly Stats API fetch, ~1.8 s p95) is memoised per (service, from_ts, to_ts, by) key for 45 s to avoid visible spinner latency on the admin polling interval.
+- **Session ID generation requires real entropy:** Without `getrandom`, all cookie-less visitors collapse to a single session ID, breaking per-visitor analytics. The scorer explicitly depends on `getrandom = "0.2"` for WASI random entropy. (inferred)
+- **Config backup freshness is monitored:** The admin health card reads a freshness marker written by `scripts/backup_service_configs.sh`; a missing or stale marker surfaces as a health warning. (inferred from `CONFIG_BACKUP_MARKER` endpoint and Dockerfile/script references)
+- **OSV vulnerability scanning is a CI gate:** `scripts/check_osv.py` runs `osv-scanner` and fails the build if vulnerability severity exceeds a configured threshold.
+- **Security regression test count is a CI floor:** `scripts/check_security_regression_count.sh` enforces a minimum number of security regression tests; the count may not decrease below the current floor.
