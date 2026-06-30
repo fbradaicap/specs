@@ -1,11 +1,11 @@
 ---
 repo: microservice1
 spec_type: technical
-commit: 67a1a3cf92762515763f4e7d8cea0cfc4eeb30c1
+commit: fc1d6e6323f710ab16190abe9550bf81c2b36f23
 model: anthropic:claude-sonnet-4-6
 prompt_version: v1
-input_hash: 50ee4e55544c2ceaf0a54f62861f4c7d0de3a524a44ec92fd862370af5bb0606
-generated_at: 2026-06-30T17:38:56.381083786+02:00
+input_hash: d184f820c48574690a1a274d278aa6d784a7a22a7d9a0daa5ad2cff964993cfa
+generated_at: 2026-06-30T17:52:55.707749678+02:00
 generator: specsync
 ---
 
@@ -13,105 +13,94 @@ generator: specsync
 
 | Component | Detail |
 |---|---|
-| Language | Java 21 (`maven.compiler.release=21`) |
-| Runtime | JVM (OpenJDK 21) or GraalVM native executable |
-| Framework | Quarkus 3.37.0 |
-| REST layer | `quarkus-rest` (Jakarta REST / JAX-RS) |
-| DI container | `quarkus-arc` (Quarkus CDI implementation) |
-| Build tool | Apache Maven (Maven Wrapper included), `quarkus-maven-plugin` 3.37.0 |
-| Test libraries | `quarkus-junit` (runtime scope: test), `rest-assured` (runtime scope: test) |
-| Compiler plugin | `maven-compiler-plugin` 3.15.0 |
-| Test runner plugins | `maven-surefire-plugin` 3.5.6, `maven-failsafe-plugin` 3.5.6 |
+| Language | Java 21 (source/release target: `21`) |
+| Runtime framework | Quarkus 3.37.0 |
+| REST layer | `quarkus-rest` (Jakarta REST / JAX-RS reactive stack) |
+| JSON serialisation | `quarkus-rest-jackson` / `quarkus-rest-client-jackson` |
+| HTTP client | `quarkus-rest-client` (MicroProfile REST Client) |
+| DI container | `quarkus-arc` (CDI 4.x) |
+| Build tool | Apache Maven (wrapper included), `quarkus-maven-plugin` 3.37.0 |
+| Base image (JVM) | `registry.access.redhat.com/ubi9/openjdk-21-runtime:1.24` |
+| Base image (native) | `registry.access.redhat.com/ubi9/ubi-minimal:9.7` / `quay.io/quarkus/ubi9-quarkus-micro-image:2.0` |
+| Test frameworks | `quarkus-junit`, REST-Assured, `maven-surefire-plugin` 3.5.6, `maven-failsafe-plugin` 3.5.6 |
 
 ## Architecture Patterns
 
-- **Layered REST API (single-resource):** The service follows a minimal, flat layered structure with a single Jakarta REST resource class acting as both the controller and the business logic layer — no separate service or repository layers are present.
-- **CDI-managed bean:** `HelloResource` is managed by Quarkus Arc (CDI), enabling dependency injection if needed in future extensions.
-- **Stateless request/response:** All endpoints are stateless; no session or persistent state is maintained.
+**Style:** Monolithic REST API — a single deployable unit exposing multiple resource endpoints with no asynchronous or event-driven elements detected.
 
-Key internal component:
+**Layered structure (flat):**
+- **Resource/controller layer** — three JAX-RS resource classes handle all HTTP concerns and inline business logic directly (no separate service or repository layers are present).
 
-| Component | Role |
-|---|---|
-| `com.example.HelloResource` | Single JAX-RS resource exposing `GET /hello`; returns plain text or JSON |
+**Key internal components:**
+
+| Component | Path | Responsibility |
+|---|---|---|
+| `CalculatorResource` | `/calculator` | Arithmetic operations (add, subtract, multiply, divide) via query parameters |
+| `HelloResource` | `/hello` | Probe / greeting endpoint returning plain text or JSON |
+| `WeatherResource` | `/weather` | Mock weather current-conditions and multi-day forecast |
+
+**Notable patterns:**
+- Static inner classes (`CalculationResult`, `WeatherInfo`, `WeatherForecast`, `DayForecast`) used as plain response DTOs serialised to JSON via Jackson.
+- Weather data is fully mocked (hard-coded `switch` block); no external weather API client is wired at runtime despite `quarkus-rest-client` being on the classpath.
+- Supports both JVM and GraalVM native-image packaging modes via Maven profiles.
 
 ## Database & Data Ownership
 
-This service owns **no datastore**. No database drivers, ORM frameworks, or migration tools are declared in `pom.xml`. No DB tables or models were detected. `application.properties` is empty, confirming no datasource configuration.
+This service owns **no datastore**. No database drivers, ORM frameworks, datasource configuration, or schema migrations are present. All state is ephemeral and computed on-request from hard-coded or in-memory logic.
 
 ## Dependencies
 
-### Runtime dependencies
-
+### Runtime
 | Dependency | Type | Purpose |
 |---|---|---|
-| `io.quarkus:quarkus-rest` | Runtime | JAX-RS/Jakarta REST implementation for HTTP endpoints |
-| `io.quarkus:quarkus-arc` | Runtime | CDI dependency injection container |
-| `io.quarkus.platform:quarkus-bom` 3.37.0 | BOM (dependency management) | Quarkus platform bill of materials |
+| `quarkus-rest` | Framework | Jakarta REST endpoint routing and HTTP server |
+| `quarkus-arc` | Framework | CDI dependency injection |
+| `quarkus-rest-jackson` | Library | JSON serialisation/deserialisation for REST responses |
+| `quarkus-rest-client` | Library | MicroProfile REST Client (declared but no concrete client interface detected in source) |
+| `quarkus-rest-client-jackson` | Library | Jackson integration for outbound REST client calls |
 
-### Test-scoped dependencies
-
-| Dependency | Type | Purpose |
+### Build / Test only
+| Dependency | Scope | Purpose |
 |---|---|---|
-| `io.quarkus:quarkus-junit` | Test | Quarkus test framework (`@QuarkusTest`, `@QuarkusIntegrationTest`) |
-| `io.rest-assured:rest-assured` | Test | HTTP integration/acceptance test DSL |
+| `quarkus-junit` | `test` | Quarkus test harness (`@QuarkusTest`, `@QuarkusIntegrationTest`) |
+| `rest-assured` | `test` | HTTP integration/black-box test assertions |
+| `maven-compiler-plugin` 3.15.0 | build | Java compilation with `-parameters` flag enabled |
+| `maven-surefire-plugin` 3.5.6 | build | Unit test execution |
+| `maven-failsafe-plugin` 3.5.6 | build | Integration test execution (bound to `integration-test`/`verify` goals) |
 
-### Build plugins
-
-| Plugin | Version | Purpose |
-|---|---|---|
-| `quarkus-maven-plugin` | 3.37.0 | Quarkus build, dev mode, native compilation |
-| `maven-compiler-plugin` | 3.15.0 | Java compilation |
-| `maven-surefire-plugin` | 3.5.6 | Unit test execution |
-| `maven-failsafe-plugin` | 3.5.6 | Integration test execution |
-
-No external services, message brokers, caches, or third-party APIs are consumed.
+No external third-party SaaS APIs, message brokers, or caches are consumed at runtime.
 
 ## Deployment Model
 
-### Container images
-
-Four Dockerfile variants are provided under `src/main/docker/`:
-
-| Dockerfile | Base image | Mode |
-|---|---|---|
-| `Dockerfile.jvm` | `ubi9/openjdk-21-runtime:1.24` | JVM — layered fast-jar (`quarkus-run.jar`) |
-| `Dockerfile.legacy-jar` | `ubi9/openjdk-21-runtime:1.24` | JVM — legacy über-jar |
-| `Dockerfile.native` | `ubi9/ubi-minimal:9.7` | Native executable (no JVM) |
-| `Dockerfile.native-micro` | `ubi9-quarkus-micro-image:2.0` | Native executable (minimal image) |
-
-All variants:
-- **Expose port:** `8080`
-- **Run as user:** non-root (`185` for JVM images, `1001` for native images)
-- **Entrypoint (JVM):** `/opt/jboss/container/java/run/run-java.sh` with `JAVA_APP_JAR=/deployments/quarkus-run.jar`
-- **Entrypoint (native):** `./application -Dquarkus.http.host=0.0.0.0`
-- **JVM tuning:** Handled via `run-java.sh` environment variables (`JAVA_OPTS_APPEND`, `JAVA_MAX_MEM_RATIO`, etc.)
-
-### Build
-
-```bash
-# JVM mode
-./mvnw package
-docker build -f src/main/docker/Dockerfile.jvm -t quarkus/hello-quarkus-jvm .
-
-# Native mode
-./mvnw package -Dnative
-docker build -f src/main/docker/Dockerfile.native -t quarkus/hello-quarkus .
+**Build:**
+```
+./mvnw package                          # fast-jar (default)
+./mvnw package -Dquarkus.package.jar.type=uber-jar   # über-jar
+./mvnw package -Dnative                 # GraalVM native binary
 ```
 
-### Orchestration
+**Container images — four Dockerfiles provided:**
 
-_Not determinable from code._ No Kubernetes manifests, Helm charts, or Docker Compose files are present in the repository.
+| Dockerfile | Mode | Base image |
+|---|---|---|
+| `Dockerfile.jvm` | JVM, fast-jar (layered) | `ubi9/openjdk-21-runtime:1.24` |
+| `Dockerfile.legacy-jar` | JVM, legacy über-jar | `ubi9/openjdk-21-runtime:1.24` |
+| `Dockerfile.native` | GraalVM native | `ubi9/ubi-minimal:9.7` |
+| `Dockerfile.native-micro` | GraalVM native (minimal) | `ubi9-quarkus-micro-image:2.0` |
 
-### Environment configuration
+**Ports:** `8080` (HTTP) exposed in all Dockerfiles. Optional debug port `5005` documented but not exposed by default.
 
-| Variable | Default / Note |
+**Key environment variables (JVM images):**
+
+| Variable | Default / Purpose |
 |---|---|
 | `JAVA_OPTS_APPEND` | `-Dquarkus.http.host=0.0.0.0 -Djava.util.logging.manager=org.jboss.logmanager.LogManager` |
-| `LANGUAGE` | `en_US:en` |
+| `JAVA_APP_JAR` | `/deployments/quarkus-run.jar` |
+| `JAVA_DEBUG` | Remote debug toggle (default off) |
+| `JAVA_MAX_MEM_RATIO` | Heap ceiling ratio relative to container memory limit (default 50%) |
 
-`application.properties` is empty; no additional application-level configuration is defined.
+**Orchestration:** _Not determinable from code._ No Kubernetes manifests, Helm charts, or Docker Compose files are present in the repository.
 
-### Health / readiness endpoints
+**Health/readiness endpoints:** Quarkus ships built-in liveness/readiness probes at `/q/health/live` and `/q/health/ready` when `quarkus-smallrye-health` is on the classpath; however, that extension is **not** declared in `pom.xml`, so dedicated health endpoints are _not determinable from code._
 
-Quarkus exposes a Dev UI at `http://localhost:8080/q/dev/` in dev mode. Dedicated health/readiness endpoints (`/q/health`) are _not determinable from code_ — the `quarkus-smallrye-health` extension is not declared in `pom.xml`.
+**Application configuration:** `src/main/resources/application.properties` is present but empty — all settings use Quarkus defaults (HTTP on `0.0.0.0:8080`).
